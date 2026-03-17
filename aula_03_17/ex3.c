@@ -14,7 +14,7 @@ int main() {
 	ret = mysystem(comando1);
 	printf("COMANDO 1: ret = %d\n",ret);
 
-	/*printf("\nCOMANDO 2: a executar mysystem para %s\n",comando2);
+	printf("\nCOMANDO 2: a executar mysystem para %s\n",comando2);
     ret = mysystem(comando2);
     printf("COMANDO 2: ret = %d\n",ret);
 
@@ -25,6 +25,6 @@ int main() {
     printf("\nCOMANDO 4: a executar mysystem para %s\n",comando4);
 	ret = mysystem(comando4);
     printf("COMANDO 4: ret = %d\n",ret);
-*/
+
     return 0;
 }

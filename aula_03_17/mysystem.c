@@ -34,6 +34,7 @@ int mysystem (const char* command) {
 		//Pai
 		wait(&status);
         if(WIFEXITED(status)){
+			res= WIFEXITED(status);
             printf("[PAI] : o filho retornou o valor %d\n",WIFEXITED(status) );
 
         }else{
