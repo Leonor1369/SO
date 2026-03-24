@@ -17,6 +17,7 @@ auxiliares: auxiliar.c
 	$(CC) $(CFLAGS) auxiliar.c -o a.out
 	$(CC) $(CFLAGS) auxiliar.c -o b.out
 	$(CC) $(CFLAGS) auxiliar.c -o c.out
+	$(CC) $(CFLAGS) auxiliar.c -o e.out
 
 clean:
 	rm -rf *.dSYM *.o ex3 controlador a.out b.out c.out
