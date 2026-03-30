@@ -51,7 +51,7 @@ int main(){
         
         for (int i = 0; i < MAX; i++){
             write(fildes[1], &i, sizeof(int));
-            printf("FILHO: enviei a mensagem %d\n", i);
+            printf("FILHO: enviei a mensagem joao %d\n", i);
         }
         
         close(fildes[1]);
@@ -64,7 +64,7 @@ int main(){
         sleep(5);
         for (int i = 0; i < MAX; i++){
             read(fildes[0], &msg, sizeof(int));
-            printf("PAI: recebi a mensagem %d\n", msg);
+            printf("PAI: recebi a mensagem zé %d\n", msg);
         }
         close(fildes[0]);
         wait(NULL);
