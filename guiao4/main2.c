@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+
+// guiao 4 exer2 
+
 /*
 int main(){
 

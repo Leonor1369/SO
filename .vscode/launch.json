@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": true,
-      "cwd": "//wsl.localhost/Ubuntu-24.04/home/nonos/uni/sistemasoperativos/aula_03_17",
-      "program": "//wsl.localhost/Ubuntu-24.04/home/nonos/uni/sistemasoperativos/aula_03_17/build/Debug/outDebug",
+      "cwd": "//wsl.localhost/Ubuntu-24.04/home/nonos/uni/sistemasoperativos/guiao4",
+      "program": "//wsl.localhost/Ubuntu-24.04/home/nonos/uni/sistemasoperativos/guiao4/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [
