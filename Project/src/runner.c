@@ -1,3 +1,6 @@
+// cliente, pede autorização, executa comandos, reporta fim
+// Modos: -e <user-id> "<comando>" | -c | -s
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,13 +9,57 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <errno.h>
 #include "protocol.h"
 
+
+// ----- Auxiliar ----------------------------------------------
 // constrói o caminho do FIFO de resposta deste runner
-void get_runner_fifo(char *buf, pid_t pid) {
+void get_runner_fifo(char *buf, size_t size pid_t pid) {
     // ex: /tmp/runner_12345
-    snprintf(buf, 64, "%s%d", RUNNER_FIFO_PREFIX, pid);
+    snprintf(buf, size, "%s%d", RUNNER_FIFO_PREFIX, (int)pid);
 }
+
+// Escreve uma string formatada no stdout sem printf
+static void out(const char *s) {
+    write(STDOUT_FILENO, s, strlen(s));
+}
+
+// Escreve um int no stdout
+static void out_int(long v) {
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%ld", v);
+    write(STDOUT_FILENO, buf, n);
+}
+
+// ------- divisão do comando: divide string em argv[] -------------------------------
+// FAZ: cmd arg1 arg2, pipes (|), redir (>, <, 2>)
+// Retorna número de segmentos separados por '|'
+// Cada segmento é um array de strings terminado em NULL
+ 
+#define MAX_SEGMENTS 16
+#define MAX_SEG_ARGS 64
+ 
+typedef struct {
+    char *argv[MAX_SEG_ARGS]; // argumentos do segmento
+    int   argc;
+    char *redir_in;           // < ficheiro
+    char *redir_out;          // > ficheiro
+    char *redir_err;          // 2> ficheiro
+} Segment;
+
+
+// int parse_command  -- Duplica a string do comando e divide em tokens
+
+
+
+//....
+//void exec_segment -- Execução de pipeline
+//void run_pipeline -- Executa nseg segmentos em pipeline; retorna quando todos terminam.
+//void free_segments --  Libertar segmentosLibertar segmentos
+
+
+// --------handle_execute ---------------------------------------------------------------
 
 void handle_execute(int argc, char *argv[]) {
     // argv[2] = user_id
@@ -61,10 +108,13 @@ void handle_execute(int argc, char *argv[]) {
     // unlink(runner_fifo);
 }
 
+
+
 void handle_query() {
     // semelhante ao execute mas envia MSG_QUERY
     // e imprime a resposta no stdout
 }
+
 
 void handle_shutdown() {
     // envia MSG_SHUTDOWN

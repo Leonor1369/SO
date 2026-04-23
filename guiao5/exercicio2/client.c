@@ -25,7 +25,7 @@ int main (int argc, char * argv[]){
 	Msg msg;
 	msg.needle = atoi(argv[1]);
 	write(fifo_server, &msg, sizeof(Msg));
-
+	close(fifo_server);
 
 	/*
 	close(fifo_server);
@@ -40,6 +40,8 @@ int main (int argc, char * argv[]){
 	int fifo_client =open(fifo_client_name, O_RDONLY);
 
 	read(fifo_client, &msg, sizeof(Msg));
+	close(fifo_client);
+	unlink(fifo_client_name);
 	printf("Recebi o numero de ocorrencias: %d\n", msg.occurrences);
 
 

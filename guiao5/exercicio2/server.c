@@ -21,29 +21,33 @@ int main (int argc, char * argv[]){
 
 	int fifo_server = open(SERVER, O_RDONLY);
 
+	int fifo_serverw= open(SERVER, O_WRONLY);
+
 	Msg msg;
+	while((read(fifo_server, &msg, sizeof(Msg))) > 0){
+		
 
-	read(fifo_server, &msg, sizeof(Msg));
+		printf("Recebi o valor: %d\n", msg.needle);
+		/*
+		close(fifo_server);
 
-	printf("Recebi o valor: %d\n", msg.needle);
-	/*
-	close(fifo_server);
+		int fifo_client = open(SERVER, O_WRONLY);
+		msg.occurrences = count_needle(msg.needle);
+		msg.pid = getpid();
+		write(fifo_client, &msg, sizeof(Msg));
+		close(fifo_client);
+		*/
 
-    int fifo_client = open(SERVER, O_WRONLY);
-    msg.occurrences = count_needle(msg.needle);
-    msg.pid = getpid();
-    write(fifo_client, &msg, sizeof(Msg));
-    close(fifo_client);
-	*/
-
-	//abrir o fifo para resopnder
-	char fifo_client_name[20];
-	sprintf(fifo_client_name, CLIENT"%d", msg.pid);
-	int fifo_client =open(fifo_client_name, O_WRONLY);
+		//abrir o fifo para resopnder
+		char fifo_client_name[20];
+		sprintf(fifo_client_name, CLIENT"%d", msg.pid);
+		int fifo_client =open(fifo_client_name, O_WRONLY);
 
 
-	msg.occurrences = count_needle(msg.needle);
+		msg.occurrences = count_needle(msg.needle);
 
-	write(fifo_client, &msg, sizeof(Msg));
+		write(fifo_client, &msg, sizeof(Msg));
+		close(fifo_client);
+	}
 	return 0;
 }
