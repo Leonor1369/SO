@@ -15,7 +15,7 @@
 
 // ----- Auxiliar ----------------------------------------------
 // constrói o caminho do FIFO de resposta deste runner
-void get_runner_fifo(char *buf, size_t size pid_t pid) {
+void get_runner_fifo(char *buf, size_t size, pid_t pid) {
     // ex: /tmp/runner_12345
     snprintf(buf, size, "%s%d", RUNNER_FIFO_PREFIX, (int)pid);
 }

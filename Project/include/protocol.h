@@ -17,7 +17,7 @@ typedef enum {
     MSG_DONE,       // runner notifica que terminou
     MSG_QUERY,      // runner pede lista de comandos
     MSG_QUERY_RESP, // controller responde à consulta
-    MSG_SHUTDOWN    // runner pede para desligar
+    MSG_SHUTDOWN,    // runner pede para desligar
     MSG_SHUTDOWN_OK  // controlle confirma shutdown
 } MsgType;
 

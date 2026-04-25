@@ -28,9 +28,23 @@ static CmdEntry *queue_head  = NULL; // fila de espera
 static CmdEntry *queue_tail  = NULL;
 static CmdEntry *exec_head   = NULL; // a executar agora
 
-// void queue_push(CmdEntry *e) - gestao de fila de espera
+//  gestao de fila de espera -- adicionar á fila 
+void queue_push(CmdEntry *e) {
+    e-> next = NULL;
+    if(queue_tail) queue_tail->next=e;
+    else queue_head=e;
+    queue_tail =e;
+}
 
-// CmdEntry *queue_pop_fcfs -- FCFS: tira o primeiro
+// FCFS: tira o primeiro
+CmdEntry *queue_pop_fcfs(void){
+    if(!queue_head) return NULL;
+    CmdEntry *e = queue_head;
+    queue_head = e->next;
+    if(queue_head) queue_tail =NULL;
+    e->next= NULL;
+    return e;
+}
 
 // CmdEntry *queue_pop_rr(void) --  // Round-Robin: tira o primeiro cujo user_id não esteja já a executar
 
@@ -51,3 +65,32 @@ CmdEntry *exec_remove(int cmd_id);*/
 // void process_message(Message *msg) -- Processar mensagem recebida
 
 // MAIN
+int main(int argc, char *argv[]) {
+    // 1. ler argumentos
+    g_max_parallel = atoi(argv[1]);
+    g_sched_policy = atoi(argv[2]);
+
+    // 2. criar o fifo do controller
+    mkfifo(CONTROLLER_FIFO, 0666);
+
+    // 3. abrir para leitura ( bloqueia até 1º runner)
+    // Truque : abrir tbm em escrita pra n bloquear
+    int fd_ctrl = open(CONTROLLER_FIFO, O_RDONLY | O_NONBLOCK);
+    // ou abrir em ler+escrita: O_RDWR
+    
+
+    // 4. loop principal
+    while (!g_shutdown_rep || g_running >0){
+        Message msg;
+        ssize_t n = read(fd_ctrl, &msg, sizeof(msg));
+        if(n == sizeof(msg)){
+            process_message(&msg);
+        }
+        try_schedule();
+    }
+
+    //5. limpar 
+    close(fd_ctrl);
+    unlink(CONTROLLER_FIFO);
+    return 0;
+}
