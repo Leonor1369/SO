@@ -1,6 +1,7 @@
 // cliente, pede autorização, executa comandos, reporta fim
 // Modos: -e <user-id> "<comando>" | -c | -s
 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <errno.h>
 #include "protocol.h"
@@ -62,53 +64,74 @@ typedef struct {
 // --------handle_execute ---------------------------------------------------------------
 
 void handle_execute(int argc, char *argv[]) {
-    // argv[2] = user_id
-    // argv[3] = comando
-    // argv[4..] = argumentos do comando
-
     pid_t my_pid = getpid();
     char runner_fifo[64];
     get_runner_fifo(runner_fifo, sizeof(runner_fifo), my_pid);
 
     // 1. criar o FIFO de resposta
     mkfifo(runner_fifo, 0666);
-    
-    // 2. abrir o FIFO do controller para escrita
+
+    // 2. enviar pedido ao controller
     Message msg = {0};
     msg.type = MSG_EXECUTE;
     msg.runner_pid = my_pid;
-    strncpy(msg.user_id, argv[2], MAX_USER_LEN);
-    strncpy(msg.command, agrv[3], MAX_CMD_LEN);
+    strncpy(msg.user_id, argv[2], MAX_USER_LEN - 1);
+    strncpy(msg.command, argv[3], MAX_CMD_LEN - 1);
 
     int fd_ctrl = open(CONTROLLER_FIFO, O_WRONLY);
     write(fd_ctrl, &msg, sizeof(msg));
     close(fd_ctrl);
 
     // 3. notificar utilizador
-    write(STDOUT_FILENO, "[runner] command submited\n", 28);
+    out("[runner] command submitted\n");
 
-    // 4. aguardar autorizaçao
+    // 4. aguardar autorização
     int fd_resp = open(runner_fifo, O_RDONLY);
     Message auth;
     read(fd_resp, &auth, sizeof(auth));
     close(fd_resp);
 
-    // 5. executar o commando
-    write(STDOUT_FILENO, "[runner] executing...\n", 22);
+    // 5. executar o comando
+    out("[runner] executing...\n");
+
+    struct timeval t_start, t_end;   // ← declarar AQUI, antes do fork
+    gettimeofday(&t_start, NULL);    // ← iniciar AQUI, antes do fork
+
     pid_t child = fork();
     if (child == 0) {
-        // filho: executar commando
-        char *args[] = {"/bin/sh", -c, argv[3], NULL};
+        char *args[] = {"/bin/sh", "-c", argv[3], NULL};
         execvp(args[0], args);
+        perror("execvp");
         _exit(1);
     }
+    if (child < 0) { 
+        perror("fork"); 
+        unlink(runner_fifo); 
+        return; 
+    }
+
     int status;
     waitpid(child, &status, 0);
 
-    // 6.calcular duraçao e enviar MSG_DONE
-    // ...
+    out("[runner] command finished\n");
 
-    // 7. limpar o FIFO de resposta
+    // 6. calcular duração e enviar MSG_DONE
+    gettimeofday(&t_end, NULL);
+    long dur_ms = (t_end.tv_sec  - t_start.tv_sec)  * 1000 + (t_end.tv_usec - t_start.tv_usec) / 1000;
+
+    Message done = {0};
+    done.type        = MSG_DONE;
+    done.runner_pid  = my_pid;
+    done.cmd_id      = auth.cmd_id;
+    done.duration_ms = dur_ms;
+
+    fd_ctrl = open(CONTROLLER_FIFO, O_WRONLY);
+    if (fd_ctrl >= 0) {
+        write(fd_ctrl, &done, sizeof(done));
+        close(fd_ctrl);
+    }
+
+    // 7. limpar
     unlink(runner_fifo);
 }
 
@@ -138,8 +161,10 @@ void handle_query(void) {
 
     char buf[4096];
     ssize_t n = read(fd_resp, buf, sizeof(buf)-1);
-    buf[n]= '\n';
-    write(STDOUT_FILENO, buf, n);
+    if (n > 0){
+        buf[n]= '\n';
+        write(STDOUT_FILENO, buf, n);
+    }
     close(fd_resp);
 
     unlink(runner_fifo);

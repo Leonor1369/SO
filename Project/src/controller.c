@@ -41,25 +41,69 @@ CmdEntry *queue_pop_fcfs(void){
     if(!queue_head) return NULL;
     CmdEntry *e = queue_head;
     queue_head = e->next;
-    if(queue_head) queue_tail =NULL;
+    if(!queue_head) queue_tail =NULL;
     e->next= NULL;
     return e;
 }
 
-// CmdEntry *queue_pop_rr(void) --  // Round-Robin: tira o primeiro cujo user_id não esteja já a executar
+static int is_user_executing(const char *user_id) {
+    CmdEntry *e = exec_head;
+    while (e) {
+        if (strcmp(e->user_id, user_id) == 0) return 1;
+        e = e->next;
+    }
+    return 0;
+}
+
+//  Round-Robin: tira o primeiro cujo user_id não esteja já a executar
+CmdEntry *queue_pop_rr(void) {
+    CmdEntry *prev = NULL, *e = queue_head;
+    while (e) {
+        if (!is_user_executing(e->user_id)) {
+            // remover e da fila
+            if (prev) prev->next = e->next;
+            else queue_head = e->next;
+            if (e == queue_tail) queue_tail = prev;
+            e->next = NULL;
+            return e;
+        }
+        prev = e;
+        e = e->next;
+    }
+    // todos os users já têm algo a executar — cair para FCFS
+    return queue_pop_fcfs();
+}
+
+// Gestão de listas de execuçao
+void exec_add(CmdEntry *e){
+    e -> next = exec_head;
+    exec_head = e;
+}
+
+CmdEntry *exec_remove(int cmd_id) {
+    CmdEntry *prev = NULL, *e = exec_head;
+    while (e) {
+        if (e->cmd_id == cmd_id) {
+            if (prev) prev->next = e->next;
+            else exec_head = e->next;
+            e->next = NULL;
+            return e;
+        }
+        prev = e;
+        e = e->next;
+    }
+    return NULL;
+}
 
 // CmdEntry *queue_pop
 
-// Gestão da lista de execução
-/*void exec_add(CmdEntry *e) ;
-CmdEntry *exec_remove(int cmd_id);*/
 
 //Log persistente 
 void log_command(const char *user_id, int cmd_id,const char *command, long duration_ms){
     int fd = open("controller.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
 
     char buf[512];
-    int n = snprintf(buf, sizeof(buf), "user=%s cmd_id=%d dutation=%ldms cmd=%s\n", user_id, cmd_id, dutation_ms, command);
+    int n = snprintf(buf, sizeof(buf), "user=%s cmd_id=%d dutation=%ldms cmd=%s\n", user_id, cmd_id, duration_ms, command);
 
     write(fd, buf, n);
     close(fd);
@@ -98,7 +142,34 @@ void try_schedule(void) {
     }
 }
 
-// void handle_query(pid_t runner_pid) -- Responder a um pedido de query
+//  Responder a um pedido de query
+void handle_query(pid_t runner_pid){
+    char runner_fifo[64];
+    snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int)runner_pid);
+
+    // construir resposta
+    char buf[4096];
+    int pos = 0;
+ 
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nExecuting\n");
+    CmdEntry *e = exec_head;
+    while (e && pos < (int)sizeof(buf) - 1) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos,"user-id %s - command-id %d\n", e->user_id, e->cmd_id);
+        e = e->next;
+    }
+
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nScheduled\n");
+    e = queue_head;
+    while (e && pos < (int)sizeof(buf) - 1) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos,"user-id %s - command-id %d\n", e->user_id, e->cmd_id);
+        e = e->next;
+    }
+ 
+    int fd = open(runner_fifo, O_WRONLY);
+    if (fd < 0) { perror("query open"); return; }
+    write(fd, buf, pos);
+    close(fd);
+}
 
 //  Processar mensagem recebida -- ainda n acabado
 void process_message(Message *msg){
@@ -106,10 +177,13 @@ void process_message(Message *msg){
         case MSG_EXECUTE: {
             // criar entrada na fila
             CmdEntry *e = malloc (sizeof(CmdEntry));
+            if (!e) { perror("malloc"); return; }
             e-> cmd_id = g_cmd_counter++;
-            e->runner_pid= msg->runner_pid;
-            strcpy(e->user_id, msg->user_id, MAX_USER_LEN);
-            strcpy(e->command, msg->command, MAX_CMD_LEN);
+            e->runner_pid = msg->runner_pid;
+            strncpy(e->user_id, msg->user_id, MAX_USER_LEN - 1);
+            e->user_id[MAX_USER_LEN - 1] = '\0';
+            strncpy(e->command, msg->command, MAX_CMD_LEN - 1);
+            e->command[MAX_CMD_LEN - 1] = '\0';
 
             //guardar tempo de chegada
             struct timeval tv;
@@ -124,7 +198,16 @@ void process_message(Message *msg){
 
         case MSG_DONE: {
             //remover da lista de execução e registar log
-            // ...
+            CmdEntry *e = exec_remove(msg->cmd_id);
+            if (e) {
+                struct timeval tv;
+                gettimeofday(&tv, NULL);
+                long now_ms = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+                long dur    = now_ms - e->submit_time_ms;
+                log_command(e->user_id, e->cmd_id, e->command, dur);
+                free(e);
+                g_running--;
+            }
             break;
         }
 
@@ -134,15 +217,27 @@ void process_message(Message *msg){
         }
 
         case MSG_SHUTDOWN: {
-            g_shutdown_rep = 1;
+            g_shutdown_req = 1;
             // responder MSG_SHUTDOWN_OK quando n houver pendentes
             break;
         }
+        
+        // Estes casos não chegam ao controller — silenciar warnings
+        case MSG_AUTHORIZE:
+        case MSG_QUERY_RESP:
+        case MSG_SHUTDOWN_OK:
+            break;
+        
+
     }
 }
 
 // MAIN
 int main(int argc, char *argv[]) {
+    if (argc < 3) {
+        write(STDERR_FILENO,"uso: controller <parallel-commands> <sched-policy>\n", 51);
+        return 1;
+    }
     // 1. ler argumentos
     g_max_parallel = atoi(argv[1]);
     g_sched_policy = atoi(argv[2]);
@@ -152,12 +247,12 @@ int main(int argc, char *argv[]) {
 
     // 3. abrir para leitura ( bloqueia até 1º runner)
     // Truque : abrir tbm em escrita pra n bloquear
-    int fd_ctrl = open(CONTROLLER_FIFO, O_RDONLY | O_NONBLOCK);
+    int fd_ctrl = open(CONTROLLER_FIFO, O_RDWR);
     // ou abrir em ler+escrita: O_RDWR
-
+    if (fd_ctrl < 0) { perror("open controller fifo"); return 1; }
 
     // 4. loop principal
-    while (!g_shutdown_rep || g_running >0){
+    while (!g_shutdown_req || g_running >0){
         Message msg;
         ssize_t n = read(fd_ctrl, &msg, sizeof(msg));
         if(n == sizeof(msg)){
