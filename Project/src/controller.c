@@ -54,15 +54,92 @@ CmdEntry *queue_pop_fcfs(void){
 /*void exec_add(CmdEntry *e) ;
 CmdEntry *exec_remove(int cmd_id);*/
 
-//Log persistente --void log_command(const char *user_id, int cmd_id,const char *command, long duration_ms)
+//Log persistente 
+void log_command(const char *user_id, int cmd_id,const char *command, long duration_ms){
+    int fd = open("controller.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
 
-// void authorize_runner(CmdEntry *e) -- enviar autorização ao runner
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf), "user=%s cmd_id=%d dutation=%ldms cmd=%s\n", user_id, cmd_id, dutation_ms, command);
 
-// void try_schedule(void) -- Escalonar próximos comandos (chamado após cada mudança de estado)
+    write(fd, buf, n);
+    close(fd);
+}
+
+// enviar autorização ao runner
+
+void authorize_runner(CmdEntry *e) {
+    char runner_fifo[64];
+
+    snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int) e->runner_pid);
+
+    Message auth = {
+        .type = MSG_AUTHORIZE,
+        .cmd_id = e->cmd_id
+    };
+
+    int fd = open(runner_fifo, O_WRONLY);
+    write(fd, &auth, sizeof(auth));
+    close(fd);
+}
+
+//  Escalonar próximos comandos (chamado após cada mudança de estado)
+//verificar se pode autorizar mais comandos
+void try_schedule(void) {
+    while (g_running < g_max_parallel) {
+        // escolher proximo FCFS ou RR
+        CmdEntry *e = (g_sched_policy == 0)
+                        ? queue_pop_fcfs()
+                        : queue_pop_rr();
+        if(!e) break;// fila vazia
+
+        exec_add(e); // mover para lista de execução
+        g_running++;
+        authorize_runner(e); // enviar MSG_AUTHORIZE
+    }
+}
 
 // void handle_query(pid_t runner_pid) -- Responder a um pedido de query
 
-// void process_message(Message *msg) -- Processar mensagem recebida
+//  Processar mensagem recebida -- ainda n acabado
+void process_message(Message *msg){
+    switch(msg->type){
+        case MSG_EXECUTE: {
+            // criar entrada na fila
+            CmdEntry *e = malloc (sizeof(CmdEntry));
+            e-> cmd_id = g_cmd_counter++;
+            e->runner_pid= msg->runner_pid;
+            strcpy(e->user_id, msg->user_id, MAX_USER_LEN);
+            strcpy(e->command, msg->command, MAX_CMD_LEN);
+
+            //guardar tempo de chegada
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            e->submit_time_ms = tv.tv_sec*1000 + tv.tv_usec/1000;
+            e->next = NULL;
+
+            queue_push(e);
+            break;
+
+        }
+
+        case MSG_DONE: {
+            //remover da lista de execução e registar log
+            // ...
+            break;
+        }
+
+        case MSG_QUERY:{
+            handle_query(msg->runner_pid);
+            break;
+        }
+
+        case MSG_SHUTDOWN: {
+            g_shutdown_rep = 1;
+            // responder MSG_SHUTDOWN_OK quando n houver pendentes
+            break;
+        }
+    }
+}
 
 // MAIN
 int main(int argc, char *argv[]) {
@@ -77,7 +154,7 @@ int main(int argc, char *argv[]) {
     // Truque : abrir tbm em escrita pra n bloquear
     int fd_ctrl = open(CONTROLLER_FIFO, O_RDONLY | O_NONBLOCK);
     // ou abrir em ler+escrita: O_RDWR
-    
+
 
     // 4. loop principal
     while (!g_shutdown_rep || g_running >0){
