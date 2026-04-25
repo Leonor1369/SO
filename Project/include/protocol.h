@@ -2,7 +2,7 @@
 #define PROTOCOL_H
 
 #include <unistd.h>
-
+// importante
 #define CONTROLLER_FIFO "/tmp/controller_in"
 #define RUNNER_FIFO_PREFIX "/tmp/runner_"
 
