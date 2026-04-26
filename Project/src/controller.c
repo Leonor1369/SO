@@ -22,6 +22,7 @@ static int  g_sched_policy   = 0;   // 0 = FCFS, 1 = Round-Robin por user
 static int  g_running        = 0;   // comandos a executar agora
 static int  g_shutdown_req   = 0;   // alguém pediu shutdown
 static int  g_cmd_counter    = 1;   // gerador de cmd_id único
+static pid_t g_shutdown_pid = 0;
 
 // filas
 static CmdEntry *queue_head  = NULL; // fila de espera
@@ -129,16 +130,16 @@ void authorize_runner(CmdEntry *e) {
 //  Escalonar próximos comandos (chamado após cada mudança de estado)
 //verificar se pode autorizar mais comandos
 void try_schedule(void) {
+    void try_schedule(void) {
     while (g_running < g_max_parallel) {
-        // escolher proximo FCFS ou RR
         CmdEntry *e = (g_sched_policy == 0)
                         ? queue_pop_fcfs()
                         : queue_pop_rr();
-        if(!e) break;// fila vazia
+        if (!e) break;
 
-        exec_add(e); // mover para lista de execução
+        exec_add(e);
         g_running++;
-        authorize_runner(e); // enviar MSG_AUTHORIZE
+        authorize_runner(e);
     }
 }
 
@@ -219,6 +220,7 @@ void process_message(Message *msg){
         case MSG_SHUTDOWN: {
             g_shutdown_req = 1;
             // responder MSG_SHUTDOWN_OK quando n houver pendentes
+            g_shutdown_pid = msg.runner_pid;
             break;
         }
         
@@ -252,7 +254,7 @@ int main(int argc, char *argv[]) {
     if (fd_ctrl < 0) { perror("open controller fifo"); return 1; }
 
     // 4. loop principal
-    while (!g_shutdown_req || g_running >0){
+    while (!g_shutdown_req || g_running >0 || queue_head != NULL){
         Message msg;
         ssize_t n = read(fd_ctrl, &msg, sizeof(msg));
         if(n == sizeof(msg)){
@@ -261,6 +263,16 @@ int main(int argc, char *argv[]) {
         try_schedule();
     }
 
+    // aqui chegamos quando: shutdown pedido + fila vazia + nada a executar
+    char runner_fifo[64];
+    snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int)g_shutdown_pid);
+    
+    Message ok = { .type = MSG_SHUTDOWN_OK };
+    int fd = open(runner_fifo, O_WRONLY);
+    if (fd >= 0) { 
+        write(fd, &ok, sizeof(ok)); close(fd);
+    }
+    
     //5. limpar 
     close(fd_ctrl);
     unlink(CONTROLLER_FIFO);
