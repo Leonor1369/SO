@@ -51,12 +51,99 @@ typedef struct {
 } Segment;
 
 
-// int parse_command  -- Duplica a string do comando e divide em tokens
+// Duplica a string do comando e divide em tokens
+int parse_command (const char *cmd_str, Segment segs[MAX_SEGMENTS]) {
+    // duplicar a string para poder modificá-la com strtok
+    char *copy = strdup(cmd_str);
+    if (!copy) return -1;
 
+    int nseg = 0;
+    char *seg_str = strtok(copy, "|"); // divide por | → cada parte é um segmento
+
+    while (seg_str != NULL && nseg < MAX_SEGMENTS) {
+        Segment *s = &segs[nseg];
+        s->argc = 0;
+        s->redir_in  = NULL;
+        s->redir_out = NULL;
+        s->redir_err = NULL;
+
+        
+        char *tok = strtok(seg_str, " \t"); //  divide cada segmento por espaços → tokens
+        while (tok != NULL && s->argc < MAX_SEG_ARGS - 1) {
+            // direcionar
+            if (strcmp(tok, ">") == 0) {
+                tok = strtok(NULL, " \t");
+                if (tok) s->redir_out = strdup(tok);// stdout 
+
+            } else if (strcmp(tok, "<") == 0) {
+                tok = strtok(NULL, " \t");
+                if (tok) s->redir_in = strdup(tok); //stdin
+
+            } else if (strcmp(tok, "2>") == 0) {
+                tok = strtok(NULL, " \t");
+                if (tok) s->redir_err = strdup(tok);// stderr
+
+            } else {
+                s->argv[s->argc++] = strdup(tok); // argumentos do commando
+            }
+            tok = strtok(NULL, " \t");
+        }
+        s->argv[s->argc] = NULL; // terminar argv com NULL
+
+        nseg++;
+        seg_str = strtok(NULL, "|");
+    }
+
+    free(copy);
+    return nseg; // retorna número de segmentos
+}
 
 
 //....
-//void exec_segment -- Execução de pipeline
+//Execução de pipeline
+// é executado npp processo filho e trata dos direcionamentos antes de fazer execvp
+void exec_segment (Segment *s, int fd_in, int fd_out) {
+    // redirecionar input
+    // fd_in e fd_out são os descritores do pipe que vêm do run_pipeline 
+    // — se não há pipe, passamos STDIN_FILENO e STDOUT_FILENO diretamente
+    if (s->redir_in) {
+        int fd = open(s->redir_in, O_RDONLY);
+        if (fd < 0) { 
+            perror("open redir_in");
+            _exit(1); 
+        }
+        dup2(fd, STDIN_FILENO); //  faz com que o stdin passe a ser o ficheiro/pipe fd
+        close(fd);
+    } else if (fd_in != STDIN_FILENO) {
+        // input vem do pipe anterior
+        dup2(fd_in, STDIN_FILENO);
+        close(fd_in);
+    }
+
+    // redirecionar output
+    if (s->redir_out) {
+        int fd = open(s->redir_out, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) { perror("open redir_out"); _exit(1); }
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+    } else if (fd_out != STDOUT_FILENO) {
+        // output vai para o pipe seguinte
+        dup2(fd_out, STDOUT_FILENO);
+        close(fd_out);
+    }
+
+    // redirecionar stderr
+    if (s->redir_err) {
+        int fd = open(s->redir_err, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) { perror("open redir_err"); _exit(1); }
+        dup2(fd, STDERR_FILENO);
+        close(fd);
+    }
+
+    execvp(s->argv[0], s->argv);
+    perror("execvp");
+    _exit(1);
+}
 //void run_pipeline -- Executa nseg segmentos em pipeline; retorna quando todos terminam.
 //void free_segments --  Libertar segmentosLibertar segmentos
 

@@ -130,7 +130,6 @@ void authorize_runner(CmdEntry *e) {
 //  Escalonar próximos comandos (chamado após cada mudança de estado)
 //verificar se pode autorizar mais comandos
 void try_schedule(void) {
-    void try_schedule(void) {
     while (g_running < g_max_parallel) {
         CmdEntry *e = (g_sched_policy == 0)
                         ? queue_pop_fcfs()
@@ -220,7 +219,7 @@ void process_message(Message *msg){
         case MSG_SHUTDOWN: {
             g_shutdown_req = 1;
             // responder MSG_SHUTDOWN_OK quando n houver pendentes
-            g_shutdown_pid = msg.runner_pid;
+            g_shutdown_pid = msg->runner_pid;
             break;
         }
         
@@ -272,7 +271,7 @@ int main(int argc, char *argv[]) {
     if (fd >= 0) { 
         write(fd, &ok, sizeof(ok)); close(fd);
     }
-    
+
     //5. limpar 
     close(fd_ctrl);
     unlink(CONTROLLER_FIFO);
