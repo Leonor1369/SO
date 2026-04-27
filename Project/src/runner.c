@@ -144,8 +144,56 @@ void exec_segment (Segment *s, int fd_in, int fd_out) {
     perror("execvp");
     _exit(1);
 }
-//void run_pipeline -- Executa nseg segmentos em pipeline; retorna quando todos terminam.
-//void free_segments --  Libertar segmentosLibertar segmentos
+
+// executa uma pipeline de segmentos, ligando os pipes entre eles
+void run_pipeline(Segment segs[], int nseg) {
+    int prev_fd = STDIN_FILENO; // input do primeiro segmento é o stdin
+    pid_t pids[MAX_SEGMENTS];
+
+    for (int i = 0; i < nseg; i++) {
+        int pipefd[2];
+        if (i < nseg - 1) { // se não é o último segmento, criar pipe
+            if (pipe(pipefd) < 0) {
+                perror("pipe");
+                exit(1);
+            }
+        } else {
+            pipefd[0] = STDIN_FILENO;
+            pipefd[1] = STDOUT_FILENO;
+        }
+
+        pid_t pid = fork();
+        if (pid == 0) {
+            // processo filho executa o segmento
+            exec_segment(&segs[i], prev_fd, pipefd[1]);
+        } else if (pid > 0) {
+            pids[i] = pid;
+            if (prev_fd != STDIN_FILENO) close(prev_fd); // fechar input do segmento anterior
+            if (pipefd[1] != STDOUT_FILENO) close(pipefd[1]); // fechar output do segmento atual
+            prev_fd = pipefd[0]; // input do próximo segmento vem do output deste
+        } else {
+            perror("fork");
+            exit(1);
+        }
+    }
+
+    // esperar por todos os filhos terminarem
+    for (int i = 0; i < nseg; i++) {
+        waitpid(pids[i], NULL, 0);
+    }
+}
+
+// liberar memória alocada para os segmentos
+void free_segments(Segment segs[], int nseg) {
+    for (int i = 0; i < nseg; i++) {
+        for (int j = 0; j < segs[i].argc; j++) {
+            free(segs[i].argv[j]);
+        }
+        if (segs[i].redir_in) free(segs[i].redir_in);
+        if (segs[i].redir_out) free(segs[i].redir_out);
+        if (segs[i].redir_err) free(segs[i].redir_err);
+    }
+}
 
 
 // --------handle_execute ---------------------------------------------------------------
@@ -184,21 +232,10 @@ void handle_execute(int argc, char *argv[]) {
     struct timeval t_start, t_end;   // ← declarar AQUI, antes do fork
     gettimeofday(&t_start, NULL);    // ← iniciar AQUI, antes do fork
 
-    pid_t child = fork();
-    if (child == 0) {
-        char *args[] = {"/bin/sh", "-c", argv[3], NULL};
-        execvp(args[0], args);
-        perror("execvp");
-        _exit(1);
-    }
-    if (child < 0) { 
-        perror("fork"); 
-        unlink(runner_fifo); 
-        return; 
-    }
-
-    int status;
-    waitpid(child, &status, 0);
+    Segment segs[MAX_SEGMENTS];
+    int nseg = parse_command(argv[3], segs);
+    run_pipeline(segs, nseg);
+    free_segments(segs, nseg);
 
     out("[runner] command finished\n");
 

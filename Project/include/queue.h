@@ -2,13 +2,15 @@
 #define QUEUE_H
 
 #include <sys/types.h>
+#include <stdbool.h>
 
+#define MAX_USER_LEN 64
 #define MAX_CMD_SIZE 256
 #define MAX_QUEUE_SIZE 1024  
 
     // ── Estrutura de Comando na Fila ───────────────────────────────────────────
 typedef struct {
-    int user_id;            // identificador do utilizador
+    char user_id[MAX_USER_LEN];  // id do utilizador
     int cmd_id;             // identificador do comando
     pid_t runner_pid;       // PID do runner
     char command[MAX_CMD_SIZE]; // comando a executar
@@ -36,6 +38,12 @@ int dequeue_command(queue_t *q, queue_command_t *cmd);
 
 // Consultar sem remover
 queue_command_t* peek_queue(queue_t *q);
+
+// Consultar elemento na posição i sem remover
+int peek_queue_at(queue_t *q, int i, queue_command_t *out);
+
+// remover elemento na posição i (não necessariamente o front)
+int queue_remove_at(queue_t *q, int i, queue_command_t *out);
 
 // Estado
 bool is_queue_empty(queue_t *q);

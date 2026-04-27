@@ -9,7 +9,7 @@ typedef struct {
     char user_id[MAX_USER_LEN];
     int cmd_id;
     char command[MAX_CMD_LEN];
-    long inicial_timestamp;  // quando o comando foi recebido
+    long initial_timestamp;  // quando o comando foi recebido
     long duration_ms;        // duração da execução
 } log_entry_t;
 

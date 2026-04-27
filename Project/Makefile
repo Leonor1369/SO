@@ -5,13 +5,12 @@ LDFLAGS =
 all: folders controller runner
 
 controller: bin/controller
-
 runner: bin/runner
 
 folders:
 	@mkdir -p src include obj bin tmp
 
-bin/controller: obj/controller.o
+bin/controller: obj/controller.o obj/queue.o obj/scheduler.o obj/logger.o
 	$(CC) $(LDFLAGS) $^ -o $@
 
 bin/runner: obj/runner.o
