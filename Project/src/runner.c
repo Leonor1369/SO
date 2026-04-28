@@ -27,13 +27,6 @@ static void out(const char *s) {
     write(STDOUT_FILENO, s, strlen(s));
 }
 
-// Escreve um int no stdout
-static void out_int(long v) {
-    char buf[32];
-    int n = snprintf(buf, sizeof(buf), "%ld", v);
-    write(STDOUT_FILENO, buf, n);
-}
-
 // ------- divisão do comando: divide string em argv[] -------------------------------
 // FAZ: cmd arg1 arg2, pipes (|), redir (>, <, 2>)
 // Retorna número de segmentos separados por '|'
