@@ -17,6 +17,8 @@
 
 #include "protocol.h"
 #include "logger.h"
+#include "queue.h"
+#include "scheduler.h"
 
 // configuração global
 static int  g_max_parallel   = 1;   // parallel-commands (arg 1)
@@ -25,112 +27,38 @@ static int  g_running        = 0;   // comandos a executar agora
 static int  g_shutdown_req   = 0;   // alguém pediu shutdown
 static int  g_cmd_counter    = 1;   // gerador de cmd_id único
 static pid_t g_shutdown_pid = 0;
-
-// filas
-static CmdEntry *queue_head  = NULL; // fila de espera
-static CmdEntry *queue_tail  = NULL;
-static CmdEntry *exec_head   = NULL; // a executar agora
-
-//  gestao de fila de espera -- adicionar á fila 
-void queue_push(CmdEntry *e) {
-    e-> next = NULL;
-    if(queue_tail) queue_tail->next=e;
-    else queue_head=e;
-    queue_tail =e;
-}
-
-// FCFS: tira o primeiro
-CmdEntry *queue_pop_fcfs(void){
-    if(!queue_head) return NULL;
-    CmdEntry *e = queue_head;
-    queue_head = e->next;
-    if(!queue_head) queue_tail =NULL;
-    e->next= NULL;
-    return e;
-}
-
-static int is_user_executing(const char *user_id) {
-    CmdEntry *e = exec_head;
-    while (e) {
-        if (strcmp(e->user_id, user_id) == 0) return 1;
-        e = e->next;
-    }
-    return 0;
-}
-
-//  Round-Robin: tira o primeiro cujo user_id não esteja já a executar
-CmdEntry *queue_pop_rr(void) {
-    CmdEntry *prev = NULL, *e = queue_head;
-    while (e) {
-        if (!is_user_executing(e->user_id)) {
-            // remover e da fila
-            if (prev) prev->next = e->next;
-            else queue_head = e->next;
-            if (e == queue_tail) queue_tail = prev;
-            e->next = NULL;
-            return e;
-        }
-        prev = e;
-        e = e->next;
-    }
-    // todos os users já têm algo a executar — cair para FCFS
-    return queue_pop_fcfs();
-}
-
-// Gestão de listas de execuçao
-void exec_add(CmdEntry *e){
-    e -> next = exec_head;
-    exec_head = e;
-}
-
-CmdEntry *exec_remove(int cmd_id) {
-    CmdEntry *prev = NULL, *e = exec_head;
-    while (e) {
-        if (e->cmd_id == cmd_id) {
-            if (prev) prev->next = e->next;
-            else exec_head = e->next;
-            e->next = NULL;
-            return e;
-        }
-        prev = e;
-        e = e->next;
-    }
-    return NULL;
-}
-
-// CmdEntry *queue_pop
+static queue_t     g_queue;
+static scheduler_t g_scheduler;
 
 
+typedef struct ExecEntry {
+    queue_command_t cmd;
+    long submit_time_ms;
+    struct ExecEntry *next;
+} ExecEntry;
+
+static ExecEntry *exec_head = NULL;
 
 // enviar autorização ao runner
 
-void authorize_runner(CmdEntry *e) {
+void authorize_runner_cmd(queue_command_t *cmd) {
     char runner_fifo[64];
-
-    snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int) e->runner_pid);
-
-    Message auth = {
-        .type = MSG_AUTHORIZE,
-        .cmd_id = e->cmd_id
-    };
-
+    snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int)cmd->runner_pid);
+    Message auth = { .type = MSG_AUTHORIZE, .cmd_id = cmd->cmd_id };
     int fd = open(runner_fifo, O_WRONLY);
-    write(fd, &auth, sizeof(auth));
-    close(fd);
+    if (fd >= 0) { write(fd, &auth, sizeof(auth)); close(fd); }
 }
 
 //  Escalonar próximos comandos (chamado após cada mudança de estado)
 //verificar se pode autorizar mais comandos
 void try_schedule(void) {
     while (g_running < g_max_parallel) {
-        CmdEntry *e = (g_sched_policy == 0)
-                        ? queue_pop_fcfs()
-                        : queue_pop_rr();
-        if (!e) break;
+        queue_command_t cmd;
+        if (!next_command(&g_scheduler, &cmd)) break;
 
-        exec_add(e);
+        exec_add_cmd(&cmd);   
         g_running++;
-        authorize_runner(e);
+        authorize_runner_cmd(&cmd);  
     }
 }
 
@@ -144,17 +72,19 @@ void handle_query(pid_t runner_pid){
     int pos = 0;
  
     pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nExecuting\n");
-    CmdEntry *e = exec_head;
+    ExecEntry *e = exec_head;
     while (e && pos < (int)sizeof(buf) - 1) {
         pos += snprintf(buf + pos, sizeof(buf) - pos,"user-id %s - command-id %d\n", e->user_id, e->cmd_id);
         e = e->next;
     }
 
     pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nScheduled\n");
-    e = queue_head;
-    while (e && pos < (int)sizeof(buf) - 1) {
-        pos += snprintf(buf + pos, sizeof(buf) - pos,"user-id %s - command-id %d\n", e->user_id, e->cmd_id);
-        e = e->next;
+    for (int i = 0; i < get_queue_size(&g_queue); i++) {
+        queue_command_t cmd;
+        if (peek_queue_at(&g_queue, i, &cmd)) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                "user-id %s - command-id %d\n", cmd.user_id, cmd.cmd_id);
+        }
     }
  
     int fd = open(runner_fifo, O_WRONLY);
@@ -167,45 +97,41 @@ void handle_query(pid_t runner_pid){
 void process_message(Message *msg){
     switch(msg->type){
         case MSG_EXECUTE: {
-            // criar entrada na fila
-            CmdEntry *e = malloc (sizeof(CmdEntry));
-            if (!e) { perror("malloc"); return; }
-            e-> cmd_id = g_cmd_counter++;
-            e->runner_pid = msg->runner_pid;
-            strncpy(e->user_id, msg->user_id, MAX_USER_LEN - 1);
-            e->user_id[MAX_USER_LEN - 1] = '\0';
-            strncpy(e->command, msg->command, MAX_CMD_LEN - 1);
-            e->command[MAX_CMD_LEN - 1] = '\0';
+            queue_command_t cmd;
+            cmd.cmd_id     = g_cmd_counter++;
+            cmd.runner_pid = msg.runner_pid;
+            strncpy(cmd.user_id, msg.user_id, MAX_USER_LEN - 1);
+            cmd.user_id[MAX_USER_LEN - 1] = '\0';
+            strncpy(cmd.command, msg.command, MAX_CMD_SIZE - 1);
+            cmd.command[MAX_CMD_SIZE - 1] = '\0';
 
-            //guardar tempo de chegada
             struct timeval tv;
             gettimeofday(&tv, NULL);
-            e->submit_time_ms = tv.tv_sec*1000 + tv.tv_usec/1000;
-            e->next = NULL;
+            cmd.entry_time = tv.tv_sec;
 
-            queue_push(e);
+            enqueue_command(&g_queue, cmd);
             break;
-
         }
 
         case MSG_DONE: {
             //remover da lista de execução e registar log
-            CmdEntry *e = exec_remove(msg->cmd_id);
+            ExecEntry *e = exec_remove(msg->cmd_id);
             if (e) {
                 struct timeval tv;
                 gettimeofday(&tv, NULL);
                 long now_ms = tv.tv_sec * 1000 + tv.tv_usec / 1000;
-                long dur    = now_ms - e->submit_time_ms;
-                
+                long dur = now_ms - e->submit_time_ms;
+
                 log_entry_t entry;
-                strncpy(entry.user_id, e->user_id, MAX_USER_LEN - 1);
+                strncpy(entry.user_id, e->cmd.user_id, MAX_USER_LEN - 1);
                 entry.user_id[MAX_USER_LEN - 1] = '\0';
-                entry.cmd_id = e->cmd_id;
-                strncpy(entry.command, e->command, MAX_CMD_LEN - 1);
+                entry.cmd_id = e->cmd.cmd_id;
+                strncpy(entry.command, e->cmd.command, MAX_CMD_LEN - 1);
                 entry.command[MAX_CMD_LEN - 1] = '\0';
                 entry.initial_timestamp = e->submit_time_ms;
                 entry.duration_ms = dur;
                 log_command_execution(entry);
+                command_finished(&g_scheduler, e->cmd.user_id);
 
                 free(e);
                 g_running--;
@@ -246,6 +172,8 @@ int main(int argc, char *argv[]) {
     g_sched_policy = atoi(argv[2]);
 
     init_logger("controller.log");
+    init_queue(&g_queue);
+    init_scheduler(&g_scheduler, (scheduling_policy_t)g_sched_policy, &g_queue);
 
     // 2. criar o fifo do controller
     mkfifo(CONTROLLER_FIFO, 0666);
@@ -257,7 +185,7 @@ int main(int argc, char *argv[]) {
     if (fd_ctrl < 0) { perror("open controller fifo"); return 1; }
 
     // 4. loop principal
-    while (!g_shutdown_req || g_running >0 || queue_head != NULL){
+    while (!g_shutdown_req || g_running >0 || !is_queue_empty(&g_queue)){
         Message msg;
         ssize_t n = read(fd_ctrl, &msg, sizeof(msg));
         if(n == sizeof(msg)){
