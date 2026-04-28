@@ -14,7 +14,9 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <errno.h>
+
 #include "protocol.h"
+#include "logger.h"
 
 // configuração global
 static int  g_max_parallel   = 1;   // parallel-commands (arg 1)
@@ -99,16 +101,6 @@ CmdEntry *exec_remove(int cmd_id) {
 // CmdEntry *queue_pop
 
 
-//Log persistente 
-void log_command(const char *user_id, int cmd_id,const char *command, long duration_ms){
-    int fd = open("controller.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
-
-    char buf[512];
-    int n = snprintf(buf, sizeof(buf), "user=%s cmd_id=%d dutation=%ldms cmd=%s\n", user_id, cmd_id, duration_ms, command);
-
-    write(fd, buf, n);
-    close(fd);
-}
 
 // enviar autorização ao runner
 
@@ -204,7 +196,17 @@ void process_message(Message *msg){
                 gettimeofday(&tv, NULL);
                 long now_ms = tv.tv_sec * 1000 + tv.tv_usec / 1000;
                 long dur    = now_ms - e->submit_time_ms;
-                log_command(e->user_id, e->cmd_id, e->command, dur);
+                
+                log_entry_t entry;
+                strncpy(entry.user_id, e->user_id, MAX_USER_LEN - 1);
+                entry.user_id[MAX_USER_LEN - 1] = '\0';
+                entry.cmd_id = e->cmd_id;
+                strncpy(entry.command, e->command, MAX_CMD_LEN - 1);
+                entry.command[MAX_CMD_LEN - 1] = '\0';
+                entry.initial_timestamp = e->submit_time_ms;
+                entry.duration_ms = dur;
+                log_command_execution(entry);
+
                 free(e);
                 g_running--;
             }
@@ -243,6 +245,8 @@ int main(int argc, char *argv[]) {
     g_max_parallel = atoi(argv[1]);
     g_sched_policy = atoi(argv[2]);
 
+    init_logger("controller.log");
+
     // 2. criar o fifo do controller
     mkfifo(CONTROLLER_FIFO, 0666);
 
@@ -275,5 +279,7 @@ int main(int argc, char *argv[]) {
     //5. limpar 
     close(fd_ctrl);
     unlink(CONTROLLER_FIFO);
+
+    close_logger();
     return 0;
 }
