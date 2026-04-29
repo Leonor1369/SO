@@ -210,6 +210,7 @@ void handle_execute(int argc, char *argv[]) {
     write(fd_ctrl, &msg, sizeof(msg));
     close(fd_ctrl);
 
+
     // 3. notificar utilizador
     out("[runner] command submitted\n");
 
@@ -219,6 +220,10 @@ void handle_execute(int argc, char *argv[]) {
     read(fd_resp, &auth, sizeof(auth));
     close(fd_resp);
 
+    char buf[128];
+    snprintf(buf, sizeof(buf), "[runner] received authorization for command %d\n", auth.cmd_id);
+    out(buf);
+    
     // 5. executar o comando
     out("[runner] executing...\n");
 
