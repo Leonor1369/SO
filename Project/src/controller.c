@@ -92,8 +92,6 @@ void try_schedule(void) {
 // --- responder a query ---
 
 void handle_query(pid_t runner_pid) {
-    char runner_fifo[64];
-    snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int)runner_pid);
 
     char buf[4096];
     int pos = 0;
@@ -105,20 +103,33 @@ void handle_query(pid_t runner_pid) {
             "user-id %s - command-id %d\n", e->cmd.user_id, e->cmd.cmd_id);  // FIX: e->cmd.user_id
         e = e->next;
     }
-
     pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nScheduled\n");
     for (int i = 0; i < get_queue_size(&g_queue); i++) {
         queue_command_t cmd;
         if (peek_queue_at(&g_queue, i, &cmd)) {
             pos += snprintf(buf + pos, sizeof(buf) - pos,
-                "user-id %s - command-id %d\n", cmd.user_id, cmd.cmd_id);
+            "user-id %s - command-id %d\n", cmd.user_id, cmd.cmd_id);
         }
     }
 
-    int fd = open(runner_fifo, O_WRONLY);
-    if (fd < 0) { perror("query open"); return; }
-    write(fd, buf, pos);
-    close(fd);
+    // Criar um fork para não bloquear o controller enquanto o runner lê a resposta
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return;
+    }else if (pid == 0)
+    {
+        // filho: processar a query e enviar resposta
+        char runner_fifo[64];
+        snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int)runner_pid);
+
+        int fd = open(runner_fifo, O_WRONLY);
+        if (fd >= 0) {
+            write(fd, buf, pos);
+            close(fd);
+        }
+        _exit(0); // filho termina aqui
+    }
 }
 
 // --- processar mensagem ---
@@ -169,6 +180,7 @@ void process_message(Message *msg) {
 
         case MSG_QUERY:
             handle_query(msg->runner_pid);
+
             break;
 
         case MSG_SHUTDOWN:
@@ -210,6 +222,7 @@ int main(int argc, char *argv[]) {
             process_message(&msg);
         }
         try_schedule();
+        while (waitpid(-1, NULL, WNOHANG) > 0); // Limpar filhos de queries
     }
 
     // shutdown: notificar runner que pediu
