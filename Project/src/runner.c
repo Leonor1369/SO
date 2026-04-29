@@ -192,6 +192,12 @@ void free_segments(Segment segs[], int nseg) {
 // --------handle_execute ---------------------------------------------------------------
 
 void handle_execute(int argc, char *argv[]) {
+    char full_cmd[MAX_CMD_LEN] = {0};
+    for (int i = 3; i < argc; i++) {
+        strncat(full_cmd, argv[i], MAX_CMD_LEN - strlen(full_cmd) - 1);
+        if (i < argc - 1) strncat(full_cmd, " ", MAX_CMD_LEN - strlen(full_cmd) - 1);
+    }
+    
     pid_t my_pid = getpid();
     char runner_fifo[64];
     get_runner_fifo(runner_fifo, sizeof(runner_fifo), my_pid);
@@ -204,7 +210,7 @@ void handle_execute(int argc, char *argv[]) {
     msg.type = MSG_EXECUTE;
     msg.runner_pid = my_pid;
     strncpy(msg.user_id, argv[2], MAX_USER_LEN - 1);
-    strncpy(msg.command, argv[3], MAX_CMD_LEN - 1);
+    strncpy(msg.command, full_cmd, MAX_CMD_LEN - 1);
 
     int fd_ctrl = open(CONTROLLER_FIFO, O_WRONLY);
     write(fd_ctrl, &msg, sizeof(msg));
@@ -230,7 +236,7 @@ void handle_execute(int argc, char *argv[]) {
     gettimeofday(&t_start, NULL);    // ← iniciar AQUI, antes do fork
 
     Segment segs[MAX_SEGMENTS];
-    int nseg = parse_command(argv[3], segs);
+    int nseg = parse_command(full_cmd, segs);
     run_pipeline(segs, nseg);
     free_segments(segs, nseg);
 
