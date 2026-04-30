@@ -229,7 +229,7 @@ void handle_execute(int argc, char *argv[]) {
  
     // 3. notificar utilizador
     char buf[128];
-    snprintf(buf, sizeof(buf), "[runner] command %d submitted\n", (int)my_pid);
+    snprintf(buf, sizeof(buf), "[runner] submitted, a aguardar autorização...\n");
     out(buf);
  
     // 4. aguardar autorização
@@ -239,7 +239,7 @@ void handle_execute(int argc, char *argv[]) {
     close(fd_resp);
     
     // 5. executar o comando
-    snprintf(buf, sizeof(buf), "[runner] executing command %d...\n", (int)my_pid);
+    snprintf(buf, sizeof(buf), "[runner] command %d executing...\n", auth.cmd_id);
     out(buf);
  
     struct timeval t_start, t_end;   // ← declarar AQUI, antes do fork
@@ -250,7 +250,7 @@ void handle_execute(int argc, char *argv[]) {
     run_pipeline(segs, nseg);
     free_segments(segs, nseg);
  
-    snprintf(buf, sizeof(buf), "[runner] command %d finished\n", (int)my_pid);
+    snprintf(buf, sizeof(buf), "[runner] command %d finished\n", auth.cmd_id);
     out(buf);
  
     // 6. calcular duração e enviar MSG_DONE

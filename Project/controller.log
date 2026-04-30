@@ -1,0 +1,6 @@
+user=alice cmd_id=1 initial_timestamp=1777587820164 duration=6003ms cmd=sleep 6
+user=bob cmd_id=2 initial_timestamp=1777587826167 duration=2005ms cmd=sleep 2
+user=carol cmd_id=3 initial_timestamp=1777587828172 duration=2007ms cmd=sleep 2
+user=alice cmd_id=1 initial_timestamp=1777588157487 duration=12ms cmd=echo hello
+user=bob cmd_id=1 initial_timestamp=1777588175375 duration=1ms cmd=echo world
+user=alice cmd_id=1 initial_timestamp=1777588407358 duration=2ms cmd=echo hello

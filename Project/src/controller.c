@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "protocol.h"
 #include "logger.h"
@@ -148,6 +149,7 @@ void process_message(Message *msg) {
             struct timeval tv;
             gettimeofday(&tv, NULL);
             cmd.entry_time = tv.tv_sec;
+            cmd.priority = msg->priority;
 
             enqueue_command(&g_queue, cmd);
             break;
@@ -206,10 +208,16 @@ int main(int argc, char *argv[]) {
     g_max_parallel = atoi(argv[1]);
     g_sched_policy = atoi(argv[2]);
 
+    signal(SIGPIPE, SIG_IGN);
+    /*O problema: quando o controller tenta escrever no FIFO de um runner que já não existe, 
+    o sistema operativo envia SIGPIPE ao controller — e o comportamento por omissão 
+    é terminar o processo inteiro.*/
+
     init_logger("controller.log");
     init_queue(&g_queue);
     init_scheduler(&g_scheduler, (scheduling_policy_t)g_sched_policy, &g_queue);
 
+    
     mkfifo(CONTROLLER_FIFO, 0666);
 
     int fd_ctrl = open(CONTROLLER_FIFO, O_RDWR);

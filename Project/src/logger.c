@@ -7,7 +7,7 @@ static int log_fd = -1; // descritor global do ficheiro de log
 
 // abrir o ficheiro de log para escrita (criar se não existir, ou truncar se existir)
 void init_logger(const char *log_file_path) {
-    int fd = open(log_file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(log_file_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if(fd < 0) {
         perror("Failed to open log file");
         return;
