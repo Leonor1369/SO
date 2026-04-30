@@ -28,6 +28,7 @@ typedef struct {
     char    user_id[MAX_USER_LEN];  // id do utilizador
     char    command[MAX_CMD_LEN]; // comando completo (string)
     long    duration_ms;        // duração em ms 
+    int     priority;           // prioridade do comando
 } Message;
 
 // Estrutura para entrada na fila/lista do controller

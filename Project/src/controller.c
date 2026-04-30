@@ -170,7 +170,7 @@ void process_message(Message *msg) {
                 entry.initial_timestamp = e->submit_time_ms;
                 entry.duration_ms = dur;
                 log_command_execution(entry);
-                command_finished(&g_scheduler, e->cmd.user_id);
+                command_finished(&g_scheduler, e->cmd.user_id, dur); // informar o scheduler do tempo de execução para SJF
 
                 free(e);
                 g_running--;

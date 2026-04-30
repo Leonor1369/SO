@@ -193,7 +193,16 @@ void free_segments(Segment segs[], int nseg) {
 
 void handle_execute(int argc, char *argv[]) {
     char full_cmd[MAX_CMD_LEN] = {0};
-    for (int i = 3; i < argc; i++) {
+    int cmd_start = 3;
+    int priority  = 0;
+ 
+    // opção opcional: -p <prioridade>
+    if (argc > 4 && strcmp(argv[3], "-p") == 0) {
+        priority  = atoi(argv[4]);
+        cmd_start = 5;
+    }
+ 
+    for (int i = cmd_start; i < argc; i++) {
         strncat(full_cmd, argv[i], MAX_CMD_LEN - strlen(full_cmd) - 1);
         if (i < argc - 1) strncat(full_cmd, " ", MAX_CMD_LEN - strlen(full_cmd) - 1);
     }
@@ -201,27 +210,28 @@ void handle_execute(int argc, char *argv[]) {
     pid_t my_pid = getpid();
     char runner_fifo[64];
     get_runner_fifo(runner_fifo, sizeof(runner_fifo), my_pid);
-
+ 
     // 1. criar o FIFO de resposta
     mkfifo(runner_fifo, 0666);
-
+ 
     // 2. enviar pedido ao controller
     Message msg = {0};
     msg.type = MSG_EXECUTE;
     msg.runner_pid = my_pid;
+    msg.priority   = priority;
     strncpy(msg.user_id, argv[2], MAX_USER_LEN - 1);
     strncpy(msg.command, full_cmd, MAX_CMD_LEN - 1);
-
+ 
     int fd_ctrl = open(CONTROLLER_FIFO, O_WRONLY);
     write(fd_ctrl, &msg, sizeof(msg));
     close(fd_ctrl);
-
-
+ 
+ 
     // 3. notificar utilizador
     char buf[128];
     snprintf(buf, sizeof(buf), "[runner] command %d submitted\n", (int)my_pid);
     out(buf);
-
+ 
     // 4. aguardar autorização
     int fd_resp = open(runner_fifo, O_RDONLY);
     Message auth;
@@ -231,34 +241,34 @@ void handle_execute(int argc, char *argv[]) {
     // 5. executar o comando
     snprintf(buf, sizeof(buf), "[runner] executing command %d...\n", (int)my_pid);
     out(buf);
-
+ 
     struct timeval t_start, t_end;   // ← declarar AQUI, antes do fork
     gettimeofday(&t_start, NULL);    // ← iniciar AQUI, antes do fork
-
+ 
     Segment segs[MAX_SEGMENTS];
     int nseg = parse_command(full_cmd, segs);
     run_pipeline(segs, nseg);
     free_segments(segs, nseg);
-
+ 
     snprintf(buf, sizeof(buf), "[runner] command %d finished\n", (int)my_pid);
     out(buf);
-
+ 
     // 6. calcular duração e enviar MSG_DONE
     gettimeofday(&t_end, NULL);
     long dur_ms = (t_end.tv_sec  - t_start.tv_sec)  * 1000 + (t_end.tv_usec - t_start.tv_usec) / 1000;
-
+ 
     Message done = {0};
     done.type        = MSG_DONE;
     done.runner_pid  = my_pid;
     done.cmd_id      = auth.cmd_id;
     done.duration_ms = dur_ms;
-
+ 
     fd_ctrl = open(CONTROLLER_FIFO, O_WRONLY);
     if (fd_ctrl >= 0) {
         write(fd_ctrl, &done, sizeof(done));
         close(fd_ctrl);
     }
-
+ 
     // 7. limpar
     unlink(runner_fifo);
 }

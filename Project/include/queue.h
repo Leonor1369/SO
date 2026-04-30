@@ -15,6 +15,7 @@ typedef struct {
     pid_t runner_pid;       // PID do runner
     char command[MAX_CMD_SIZE]; // comando a executar
     time_t entry_time;         // tempo de entrada na fila (timestamp)
+    int priority;            // prioridade do comando (maior valor = maior priority)
 } queue_command_t;
 
 
