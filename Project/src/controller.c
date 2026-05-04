@@ -23,6 +23,10 @@
 
 #define SHUTDOWN_TIMEOUT_S 10
 
+
+
+//commit
+
 // configuração global
 static int   g_max_parallel = 1;
 static int   g_sched_policy = 0;
