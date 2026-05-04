@@ -21,6 +21,8 @@
 #include "queue.h"
 #include "scheduler.h"
 
+#define SHUTDOWN_TIMEOUT_S 10
+
 // configuração global
 static int   g_max_parallel = 1;
 static int   g_sched_policy = 0;
@@ -143,8 +145,8 @@ void process_message(Message *msg) {
             cmd.runner_pid = msg->runner_pid;   // FIX: msg-> em vez de msg.
             strncpy(cmd.user_id, msg->user_id, MAX_USER_LEN - 1);
             cmd.user_id[MAX_USER_LEN - 1] = '\0';
-            strncpy(cmd.command, msg->command, MAX_CMD_SIZE - 1);
-            cmd.command[MAX_CMD_SIZE - 1] = '\0';
+            strncpy(cmd.command, msg->command, MAX_CMD_LEN - 1);
+            cmd.command[MAX_CMD_LEN - 1] = '\0';
 
             struct timeval tv;
             gettimeofday(&tv, NULL);
@@ -208,11 +210,6 @@ int main(int argc, char *argv[]) {
     g_max_parallel = atoi(argv[1]);
     g_sched_policy = atoi(argv[2]);
 
-    signal(SIGPIPE, SIG_IGN);
-    /*O problema: quando o controller tenta escrever no FIFO de um runner que já não existe, 
-    o sistema operativo envia SIGPIPE ao controller — e o comportamento por omissão 
-    é terminar o processo inteiro.*/
-
     init_logger("controller.log");
     init_queue(&g_queue);
     init_scheduler(&g_scheduler, (scheduling_policy_t)g_sched_policy, &g_queue);
@@ -223,14 +220,63 @@ int main(int argc, char *argv[]) {
     int fd_ctrl = open(CONTROLLER_FIFO, O_RDWR);
     if (fd_ctrl < 0) { perror("open controller fifo"); return 1; }
 
-    while (!g_shutdown_req || g_running > 0 || !is_queue_empty(&g_queue)) {
-        Message msg;
-        ssize_t n = read(fd_ctrl, &msg, sizeof(msg));
-        if (n == sizeof(msg)) {
-            process_message(&msg);
+    // tornar fd_ctrl não-bloqueante para usar com select()
+    int flags = fcntl(fd_ctrl, F_GETFL, 0);
+    fcntl(fd_ctrl, F_SETFL, flags | O_NONBLOCK);
+
+    
+    time_t shutdown_deadline = 0;
+
+
+      while (!g_shutdown_req || g_running > 0 || !is_queue_empty(&g_queue)) {
+
+        // watchdog: deadline de shutdown expirou → forçar saída
+        if (g_shutdown_req && shutdown_deadline != 0 && time(NULL) >= shutdown_deadline) {
+            write(STDERR_FILENO,
+                  "[controller] timeout: runners provavelmente mortos, a sair.\n", 61);
+            break;
         }
+
+        // esperar até 500 ms por dados no FIFO — evita busy-wait e permite
+        // reagir a mortes de runners sem bloquear indefinidamente
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd_ctrl, &rfds);
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 500000 };
+        int ready = select(fd_ctrl + 1, &rfds, NULL, NULL, &tv);
+
+        if (ready > 0) {
+            Message msg;
+            ssize_t n = read(fd_ctrl, &msg, sizeof(msg));
+            if (n == sizeof(msg)) {
+                process_message(&msg);
+                // ativar deadline na primeira mensagem de shutdown
+                if (msg.type == MSG_SHUTDOWN && shutdown_deadline == 0)
+                    shutdown_deadline = time(NULL) + SHUTDOWN_TIMEOUT_S;
+            }
+        }
+
         try_schedule();
-        while (waitpid(-1, NULL, WNOHANG) > 0); // Limpar filhos de queries
+
+        // limpar filhos de queries e detetar runners que morreram
+        pid_t dead;
+        while ((dead = waitpid(-1, NULL, WNOHANG)) > 0) {
+            // verificar se o pid morto corresponde a um runner em execução
+            ExecEntry *prev = NULL, *e = exec_head;
+            while (e) {
+                if (e->cmd.runner_pid == dead) {
+                    write(STDERR_FILENO, "[controller] runner morreu sem MSG_DONE\n", 41);
+                    if (prev) prev->next = e->next;
+                    else exec_head = e->next;
+                    command_finished(&g_scheduler, e->cmd.user_id, 0);
+                    free(e);
+                    g_running--;
+                    break;
+                }
+                prev = e;
+                e = e->next;
+            }
+        }
     }
 
     // shutdown: notificar runner que pediu

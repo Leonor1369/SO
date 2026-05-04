@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 #define MAX_USER_LEN 64
-#define MAX_CMD_SIZE 256
+#define MAX_CMD_LEN 256
 #define MAX_QUEUE_SIZE 1024  
 
     // ── Estrutura de Comando na Fila ───────────────────────────────────────────
@@ -13,7 +13,7 @@ typedef struct {
     char user_id[MAX_USER_LEN];  // id do utilizador
     int cmd_id;             // identificador do comando
     pid_t runner_pid;       // PID do runner
-    char command[MAX_CMD_SIZE]; // comando a executar
+    char command[MAX_CMD_LEN]; // comando a executar
     time_t entry_time;         // tempo de entrada na fila (timestamp)
     int priority;            // prioridade do comando (maior valor = maior priority)
 } queue_command_t;
