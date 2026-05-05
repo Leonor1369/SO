@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
 
 #include "protocol.h"
 #include "logger.h"
@@ -23,9 +24,6 @@
 
 #define SHUTDOWN_TIMEOUT_S 10
 
-
-
-//commit
 
 // configuração global
 static int   g_max_parallel = 1;
@@ -40,7 +38,7 @@ static scheduler_t g_scheduler;
 // lista de execução
 typedef struct ExecEntry {
     queue_command_t  cmd;
-    long             submit_time_ms;
+    long submit_time_ms;
     struct ExecEntry *next;
 } ExecEntry;
 

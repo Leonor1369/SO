@@ -46,53 +46,52 @@ typedef struct {
 
 // Duplica a string do comando e divide em tokens
 int parse_command (const char *cmd_str, Segment segs[MAX_SEGMENTS]) {
-    // duplicar a string para poder modificá-la com strtok
+    // duplicar a string para poder modificá-la com strtok_r
     char *copy = strdup(cmd_str);
     if (!copy) return -1;
-
+ 
     int nseg = 0;
-    char *seg_str = strtok(copy, "|"); // divide por | → cada parte é um segmento
-
+    char *seg_save; // saveptr para o nível dos segmentos (|)
+    char *seg_str = strtok_r(copy, "|", &seg_save);
+ 
+    // para cada segmento separado por '|', dividir em tokens e identificar redirecionamentos
     while (seg_str != NULL && nseg < MAX_SEGMENTS) {
         Segment *s = &segs[nseg];
         s->argc = 0;
         s->redir_in  = NULL;
         s->redir_out = NULL;
         s->redir_err = NULL;
-
-        
-        char *tok = strtok(seg_str, " \t"); //  divide cada segmento por espaços → tokens
+ 
+        char *tok_save; // saveptr para o nível dos tokens (espaços) — separado do anterior
+        char *tok = strtok_r(seg_str, " \t", &tok_save);
         while (tok != NULL && s->argc < MAX_SEG_ARGS - 1) {
-            // direcionar
             if (strcmp(tok, ">") == 0) {
-                tok = strtok(NULL, " \t");
-                if (tok) s->redir_out = strdup(tok);// stdout 
-
+                tok = strtok_r(NULL, " \t", &tok_save);
+                if (tok) s->redir_out = strdup(tok); // stdout vai para ficheiro
+ 
             } else if (strcmp(tok, "<") == 0) {
-                tok = strtok(NULL, " \t");
-                if (tok) s->redir_in = strdup(tok); //stdin
-
+                tok = strtok_r(NULL, " \t", &tok_save); // stdin vem de ficheiro
+                if (tok) s->redir_in = strdup(tok);
+ 
             } else if (strcmp(tok, "2>") == 0) {
-                tok = strtok(NULL, " \t");
-                if (tok) s->redir_err = strdup(tok);// stderr
-
+                tok = strtok_r(NULL, " \t", &tok_save); // stderr vai para ficheiro
+                if (tok) s->redir_err = strdup(tok);
+ 
             } else {
-                s->argv[s->argc++] = strdup(tok); // argumentos do commando
+                s->argv[s->argc++] = strdup(tok);
             }
-            tok = strtok(NULL, " \t");
+            tok = strtok_r(NULL," \t", &tok_save);
         }
-        s->argv[s->argc] = NULL; // terminar argv com NULL
-
+        s->argv[s->argc] = NULL;
+ 
         nseg++;
-        seg_str = strtok(NULL, "|");
+        seg_str = strtok_r(NULL, "|", &seg_save);
     }
-
+ 
     free(copy);
-    return nseg; // retorna número de segmentos
+    return nseg;
 }
 
-
-//....
 //Execução de pipeline
 // é executado npp processo filho e trata dos direcionamentos antes de fazer execvp
 void exec_segment (Segment *s, int fd_in, int fd_out) {
@@ -176,7 +175,7 @@ void run_pipeline(Segment segs[], int nseg) {
     }
 }
 
-// liberar memória alocada para os segmentos
+// libertar memória alocada para os segmentos
 void free_segments(Segment segs[], int nseg) {
     for (int i = 0; i < nseg; i++) {
         for (int j = 0; j < segs[i].argc; j++) {
@@ -229,7 +228,7 @@ void handle_execute(int argc, char *argv[]) {
  
     // 3. notificar utilizador
     char buf[128];
-    snprintf(buf, sizeof(buf), "[runner] submitted, a aguardar autorização...\n");
+    snprintf(buf, sizeof(buf), "[runner] command submitted\n");
     out(buf);
  
     // 4. aguardar autorização
@@ -239,7 +238,7 @@ void handle_execute(int argc, char *argv[]) {
     close(fd_resp);
     
     // 5. executar o comando
-    snprintf(buf, sizeof(buf), "[runner] command %d executing...\n", auth.cmd_id);
+    snprintf(buf, sizeof(buf), "[runner] executing command %d...\n", auth.cmd_id);
     out(buf);
  
     struct timeval t_start, t_end;   // ← declarar AQUI, antes do fork
@@ -328,12 +327,14 @@ void handle_shutdown() {
     write(fd_ctrl, &msg, sizeof(msg));
     close(fd_ctrl);
 
+    out("[runner] sent shutdown notification\n");
+
     // 3. receber confirmação do controller
     int fd_resp = open(runner_fifo, O_RDONLY);
     Message resp;
     ssize_t n = read(fd_resp, &resp, sizeof(resp));
     if (n == sizeof(resp) && resp.type == MSG_SHUTDOWN_OK) {
-        out("[runner] shutdown confirmado pelo controller\n");
+        out("[runner] controller exited.\n");
     } else {
         out("[runner] erro ao receber confirmação de shutdown\n");
     }
