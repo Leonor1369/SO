@@ -1,8 +1,27 @@
-// escalonador central, recebe pedidos e autoriza execuções
+/**
+controller.c — Escalonador central do sistema de orquestração de comandos.
 
-// controller.c — escalonador central
-// Recebe pedidos de runners via FIFO, escalonamento FIFO, autoriza execuções,
-// regista log, responde a queries e suporta shutdown gracioso.
+ Responsabilidades:
+  - Receber pedidos de execução (MSG_EXECUTE) de múltiplos runners via FIFO nomeado.
+  - Manter uma fila de comandos pendentes e escaloná-los segundo a política configurada.
+  - Autorizar runners a executar (MSG_AUTHORIZE) quando um slot de execução fica livre.
+  - Receber notificações de conclusão (MSG_DONE) e atualizar o estado interno.
+  - Responder a consultas de estado (MSG_QUERY) sem bloquear o processamento principal.
+  - Registar em ficheiro cada comando concluído (utilizador, id, duração, timestamp).
+  - Suportar shutdown gracioso: aguarda todos os comandos em curso antes de terminar.
+
+ Comunicação:
+  - FIFO de entrada:  /tmp/controller_in  (lido pelo controller)
+  - FIFO de resposta: /tmp/runner_<pid>   (escrito pelo controller, lido pelo runner)
+
+ Compilação (via Makefile):
+  gcc -Wall -g -Iinclude src/controller.c src/queue.c src/scheduler.c src/logger.c -o bin/controller
+
+ Utilização:
+  ./controller <parallel-commands> <sched-policy>
+    parallel-commands : número máximo de comandos a executar em simultâneo
+    sched-policy      : 0=FCFS, 1=SJF, 2=Priority, 3=RoundRobin
+*/
  
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,24 +41,31 @@
 #include "queue.h"
 #include "scheduler.h"
 
+/* Tempo máximo (segundos) que o controller espera após receber MSG_SHUTDOWN
+antes de forçar a saída, caso algum runner morra sem enviar MSG_DONE. */
 #define SHUTDOWN_TIMEOUT_S 10
 
 
 // configuração global
-static int   g_max_parallel = 1;
-static int   g_sched_policy = 0;
-static int   g_running      = 0;
-static int   g_shutdown_req = 0;
-static int   g_cmd_counter  = 1;
-static pid_t g_shutdown_pid = 0;
-static queue_t     g_queue;
-static scheduler_t g_scheduler;
+static int   g_max_parallel = 1; // slots de execução pararlela
+static int   g_sched_policy = 0; // política de escalonamento: 0=FCFS, 1=SJF, 2=Priority, 3=RoundRobin
+static int   g_running      = 0; // número de comandos atualmente em execução
+static int   g_shutdown_req = 0; // flag: foi recebido o pedido de shitdown
+static int   g_cmd_counter  = 1; // cont global para atribuir cmd_id únicos a cada comando recebido
+static pid_t g_shutdown_pid = 0; // PID do runne que pediu o shutdown, para enviar confirmação no final
+static queue_t     g_queue; // fila de comandos pendentes
+static scheduler_t g_scheduler; // escalonar ( encapsula politica + fila)
 
 // lista de execução
+ 
+/*
+ExecEntry — nó da lista ligada de comandos atualmente em execução.
+
+*/
 typedef struct ExecEntry {
-    queue_command_t  cmd;
-    long submit_time_ms;
-    struct ExecEntry *next;
+    queue_command_t  cmd; // copia completa do comando
+    long submit_time_ms; // timestamp de submissao em ms (para calcular duração)
+    struct ExecEntry *next; // proximo no da lista
 } ExecEntry;
 
 static ExecEntry *exec_head = NULL;
@@ -73,7 +99,7 @@ ExecEntry *exec_remove(int cmd_id) {
     return NULL;
 }
 
-// --- enviar autorização ao runner ---
+// --- Envia MSG_AUTHORIZE ao FIFO privado do runner
 
 void authorize_runner_cmd(queue_command_t *cmd) {
     char runner_fifo[64];
@@ -83,8 +109,12 @@ void authorize_runner_cmd(queue_command_t *cmd) {
     if (fd >= 0) { write(fd, &auth, sizeof(auth)); close(fd); }
 }
 
-// --- escalonar próximos comandos ---
 
+
+// escalonamento 
+
+
+// Tenta preencher os slots de execução disponíveis, autorizando comandos do scheduler
 void try_schedule(void) {
     while (g_running < g_max_parallel) {
         queue_command_t cmd;
@@ -95,14 +125,13 @@ void try_schedule(void) {
     }
 }
 
-// --- responder a query ---
-
+// Responde a um pedido MSG_QUERY de um runner
 void handle_query(pid_t runner_pid) {
 
     char buf[4096];
     int pos = 0;
 
-    // construir resposta: listar comandos em execução + na fila
+    // listar comandos em execução
     pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nExecuting\n");
     ExecEntry *e = exec_head;
     while (e && pos < (int)sizeof(buf) - 1) {
@@ -111,6 +140,7 @@ void handle_query(pid_t runner_pid) {
         e = e->next;
     }
     
+    //  listar comandos na fila de espera
     pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nScheduled\n");
     for (int i = 0; i < get_queue_size(&g_queue); i++) {
         queue_command_t cmd;
@@ -121,13 +151,14 @@ void handle_query(pid_t runner_pid) {
     }
 
     // Criar um fork para não bloquear o controller enquanto o runner lê a resposta
+    // O filho trata disso de forma assíncrona enquanto o pai continua a processar mensagens
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
         return;
     }else if (pid == 0)
     {
-        // filho: processar a query e enviar resposta
+        // filho: abre o FIFO do runner e envia a resposta
         char runner_fifo[64];
         snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int)runner_pid);
 
@@ -136,16 +167,22 @@ void handle_query(pid_t runner_pid) {
             write(fd, buf, pos);
             close(fd);
         }
-        _exit(0); // filho termina aqui
+        _exit(0); // filho termina após enviar a resposta 
     }
+    // pai: continua o loop principal imediatamente, sem esperar pelo filho
 }
 
 // --- processar mensagem ---
 
+
+//  Despacha uma mensagem recebida pelo controller
 void process_message(Message *msg) {
     switch (msg->type) {
-        // nova execução: adicionar à fila e tentar escalonar
+        // Atribui cmd_id, copia campos da mensagem para um
+ *      // queue_command_t e insere na fila de espera. O escalonamento
+ *      // ocorre depois, em try_schedule().
         case MSG_EXECUTE: {
+            // criar entrada na fila com id unico e metadados do pedido
             queue_command_t cmd;
             cmd.cmd_id     = g_cmd_counter++;
             cmd.runner_pid = msg->runner_pid;  
@@ -162,9 +199,12 @@ void process_message(Message *msg) {
             enqueue_command(&g_queue, cmd);
             break;
         }
-        // comando terminou: remover da lista de execução, registar log e informar scheduler
+        
         case MSG_DONE: {
-            ExecEntry *e = exec_remove(msg->cmd_id);  // FIX: agora exec_remove está definida
+            /* O runner concluiu a execução. 
+            Calcular a duração real (tempo desde que o controller recebeu o pedido até agora),
+            registar no log e informar o scheduler para atualizar o histórico SJF do utilizador. */
+            ExecEntry *e = exec_remove(msg->cmd_id);  
             if (e) {
                 struct timeval tv;
                 gettimeofday(&tv, NULL);
@@ -180,20 +220,23 @@ void process_message(Message *msg) {
                 entry.initial_timestamp = e->submit_time_ms;
                 entry.duration_ms = dur;
                 log_command_execution(entry);
-                command_finished(&g_scheduler, e->cmd.user_id, dur); // informar o scheduler do tempo de execução para SJF
+                // atualiza histograma SJF com duração real para este utilizador
+                command_finished(&g_scheduler, e->cmd.user_id, dur);
 
                 free(e);
                 g_running--;
             }
             break;
         }
-        // query: construir resposta e enviar ao runner
+        
         case MSG_QUERY:
+        // delegar numa função separada para manter process_message simples e não bloquear o loop principal
             handle_query(msg->runner_pid);
 
             break;
-        // shutdown: marcar pedido de shutdown e guardar PID do runner que pediu
         case MSG_SHUTDOWN:
+        // registar pedido; o loop principal aguardará o fim dos comandos em execução 
+        // e depois enviará a confirmação ao runner que pediu o shutdown
             g_shutdown_req = 1;
             g_shutdown_pid = msg->runner_pid;
             break;
@@ -206,9 +249,9 @@ void process_message(Message *msg) {
 }
 
 // --- MAIN ---
-
+// Inicializa o sistema e executa o loop principal de eventos.
 int main(int argc, char *argv[]) {
-    // 1. ler configuração (paralelismo e política de escalonamento)
+    // 1. validar argumentos
     if (argc < 3) {
         write(STDERR_FILENO, "uso: controller <parallel-commands> <sched-policy>\n", 51);
         return 1;
@@ -216,14 +259,17 @@ int main(int argc, char *argv[]) {
     // 2. inicializar estruturas de dados, logger e FIFO
     g_max_parallel = atoi(argv[1]);
     g_sched_policy = atoi(argv[2]);
+
     // validar política de escalonamento
     init_logger("controller.log");
     init_queue(&g_queue);
     init_scheduler(&g_scheduler, (scheduling_policy_t)g_sched_policy, &g_queue);
 
-    // criar FIFO do controller
+    // criar FIFO de entrada do controller
     mkfifo(CONTROLLER_FIFO, 0666);
 
+    // 3. abrir FIFO em O_RDWR para evitar EOF ao esvaziar o FIFO 
+    // (se nenhum runner estiver escrevendo, o controller não bloqueia nem termina)
     int fd_ctrl = open(CONTROLLER_FIFO, O_RDWR);
     if (fd_ctrl < 0) { perror("open controller fifo"); return 1; }
 
@@ -231,27 +277,34 @@ int main(int argc, char *argv[]) {
     int flags = fcntl(fd_ctrl, F_GETFL, 0);
     fcntl(fd_ctrl, F_SETFL, flags | O_NONBLOCK);
 
-    // 3. loop principal: processar mensagens, escalonar comandos e monitorizar runners
+    // 4. loop principal: processar mensagens, escalonar comandos e monitorizar runners
     time_t shutdown_deadline = 0;
 
 
+    // Condição de saída: sair apenas quando o shutdown foi pedido E
+    // não há comandos em execução E a fila está vazia.
+    // Isto garante que todos os comandos submetidos antes do shutdown
+    // são processados antes de o controller terminar.
     while (!g_shutdown_req || g_running > 0 || !is_queue_empty(&g_queue)) {
 
-        // watchdog: deadline de shutdown expirou → forçar saída
+        // 4a. watchdog: forçar saída se o timeout de shutdown expirou
         if (g_shutdown_req && shutdown_deadline != 0 && time(NULL) >= shutdown_deadline) {
             write(STDERR_FILENO,
                   "[controller] timeout: runners provavelmente mortos, a sair.\n", 61);
             break;
         }
 
-        // esperar até 500 ms por dados no FIFO — evita busy-wait e permite
-        // reagir a mortes de runners sem bloquear indefinidamente
+        //4b. select() com timeout de 500 ms:
+        //  - Evita busy-wait quando não há mensagens.
+        //  - Permite detetar periodicamente runners mortos via waitpid().
+        //  - O timeout curto garante que try_schedule() é chamado frequentemente.
         fd_set rfds;
         FD_ZERO(&rfds);
         FD_SET(fd_ctrl, &rfds);
         struct timeval tv = { .tv_sec = 0, .tv_usec = 500000 };
         int ready = select(fd_ctrl + 1, &rfds, NULL, NULL, &tv);
 
+        // 4c. se houver mensagens, ler e processar
         if (ready > 0) {
             Message msg;
             ssize_t n = read(fd_ctrl, &msg, sizeof(msg));
@@ -263,10 +316,14 @@ int main(int argc, char *argv[]) {
             }
         }
 
-    // tentar escalonar comandos sempre que possível (ex: após receber um pedido ou terminar um comando)
+    // 4d. tentar escalonar comandos sempre que possível (ex: após receber um pedido ou terminar um comando)
         try_schedule();
 
-        // limpar filhos de queries e detetar runners que morreram
+        // 4e. recolher processos filho:
+        //  - Filhos criados por handle_query() para enviar respostas.
+        //  - Runners que morreram sem enviar MSG_DONE (detetados pelo PID).
+        //    Nesse caso, decrementamos g_running e informamos o scheduler.
+        
         pid_t dead;
         while ((dead = waitpid(-1, NULL, WNOHANG)) > 0) {
             // verificar se o pid morto corresponde a um runner em execução
@@ -287,7 +344,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // shutdown: notificar runner que pediu
+    // 5. notificar runner que pediu o shutdown e limpar recursos antes de sair
     char runner_fifo[64];
     snprintf(runner_fifo, sizeof(runner_fifo), "%s%d", RUNNER_FIFO_PREFIX, (int)g_shutdown_pid);
     Message ok = { .type = MSG_SHUTDOWN_OK };
@@ -295,7 +352,7 @@ int main(int argc, char *argv[]) {
     if (fd >= 0) { write(fd, &ok, sizeof(ok)); close(fd); }
 
     close(fd_ctrl);
-    unlink(CONTROLLER_FIFO);
+    unlink(CONTROLLER_FIFO); // remover o FIFO do sistema de ficheiros
     close_logger();
     return 0;
 }
