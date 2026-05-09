@@ -1,3 +1,30 @@
+// queue.c - implementação da fila circular de comandos 
+
+/*A fila é a estrutura de dados central do controller: todos os comandos
+ submetidos pelos runners são inseridos aqui e retirados pelo scheduler
+ de acordo com a política configurada.
+
+ Estrutura interna:
+  A fila é implementada como um array circular de tamanho fixo MAX_QUEUE_SIZE.
+  Os índices front e rear marcam, respetivamente, o primeiro elemento válido
+  e a posição onde o próximo elemento será inserido.
+
+  Invariantes:
+   - size == 0 ↔ fila vazia
+   - size == MAX_QUEUE_SIZE ↔ fila cheia
+   - Os elementos válidos ocupam as posições:
+       (front + 0) % MAX_QUEUE_SIZE
+       (front + 1) % MAX_QUEUE_SIZE
+       ...
+       (front + size - 1) % MAX_QUEUE_SIZE
+
+ Complexidade:
+  - enqueue_command  : O(1)
+  - dequeue_command  : O(1)
+  - peek_queue       : O(1)
+  - peek_queue_at    : O(1)
+  - queue_remove_at  : O(n) — desloca os elementos seguintes
+*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,13 +33,13 @@
 #include <time.h>
 #include "queue.h"
 
-// implementação da fila de comandos 
+// Inicializa a fila para o estado vazio
 void init_queue(queue_t *q) {
     q->front = 0;
     q->rear  = -1;
     q->size  = 0;
 }
-
+// Insere um comando no fim da fila (FIFO)
 int enqueue_command(queue_t *q, queue_command_t cmd) {
     if (is_queue_full(q)) return -1;
     q->rear = (q->rear + 1) % MAX_QUEUE_SIZE;
@@ -20,7 +47,7 @@ int enqueue_command(queue_t *q, queue_command_t cmd) {
     q->size++;
     return 0;
 }
-// remove o comando mais antigo da fila e copia para *cmd, ou retorna -1 se a fila estiver vazia
+// remove e devolve o comando mais antigo da fila e copia para *cmd, ou retorna -1 se a fila estiver vazia
 int dequeue_command(queue_t *q, queue_command_t *cmd) {
     if (is_queue_empty(q)) return -1;
     *cmd = q->commands[q->front];
@@ -28,7 +55,7 @@ int dequeue_command(queue_t *q, queue_command_t *cmd) {
     q->size--;
     return 0;
 }
-// remove o comando na posição i (0 = mais antigo) e copia para *cmd, ou retorna -1 se i for inválido
+// Remove o elemento na posição lógica i (0 = mais antigo)
 int queue_remove_at(queue_t *q, int i, queue_command_t *out) {
     if (i < 0 || i >= q->size) return 0;
     int idx = (q->front + i) % MAX_QUEUE_SIZE;
@@ -43,12 +70,12 @@ int queue_remove_at(queue_t *q, int i, queue_command_t *out) {
     q->size--;
     return 1;
 }
-// retorna o comando mais antigo da fila sem remover, ou NULL se a fila estiver vazia
+// Devolve um ponteiro para o elemento mais antigo sem o remover
 queue_command_t* peek_queue(queue_t *q) {
     if (is_queue_empty(q)) return NULL;
     return &q->commands[q->front];
 }
-// retorna o comando na posição i (0 = mais antigo) sem remover, ou NULL se i for inválido
+// Copia o elemento na posição lógica i sem o remover, ou retorna 0 se i for inválido
 int peek_queue_at(queue_t *q, int i, queue_command_t *out) {
     if (i < 0 || i >= q->size) return 0;
     int idx = (q->front + i) % MAX_QUEUE_SIZE;
@@ -57,9 +84,10 @@ int peek_queue_at(queue_t *q, int i, queue_command_t *out) {
 }
 
 // helper para imprimir o conteúdo da fila (para debug)
-bool is_queue_empty(queue_t *q) { return q->size == 0; }
-bool is_queue_full(queue_t *q)  { return q->size == MAX_QUEUE_SIZE; }
-int  get_queue_size(queue_t *q) { return q->size; }
+
+bool is_queue_empty(queue_t *q) { return q->size == 0; } // Verifica se a fila está vazia
+bool is_queue_full(queue_t *q)  { return q->size == MAX_QUEUE_SIZE; }  // Verifica se a fila está cheia
+int  get_queue_size(queue_t *q) { return q->size; }  // Devolve o número atual de elementos na fila.
 
 // imprimir a fila no stdout (para o handle_query do controller)
 void list_queue(queue_t *q) {
