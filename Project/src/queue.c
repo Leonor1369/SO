@@ -6,6 +6,7 @@
 #include <time.h>
 #include "queue.h"
 
+// implementação da fila de comandos 
 void init_queue(queue_t *q) {
     q->front = 0;
     q->rear  = -1;
@@ -19,7 +20,7 @@ int enqueue_command(queue_t *q, queue_command_t cmd) {
     q->size++;
     return 0;
 }
-
+// remove o comando mais antigo da fila e copia para *cmd, ou retorna -1 se a fila estiver vazia
 int dequeue_command(queue_t *q, queue_command_t *cmd) {
     if (is_queue_empty(q)) return -1;
     *cmd = q->commands[q->front];
@@ -27,7 +28,7 @@ int dequeue_command(queue_t *q, queue_command_t *cmd) {
     q->size--;
     return 0;
 }
-
+// remove o comando na posição i (0 = mais antigo) e copia para *cmd, ou retorna -1 se i for inválido
 int queue_remove_at(queue_t *q, int i, queue_command_t *out) {
     if (i < 0 || i >= q->size) return 0;
     int idx = (q->front + i) % MAX_QUEUE_SIZE;
@@ -42,12 +43,12 @@ int queue_remove_at(queue_t *q, int i, queue_command_t *out) {
     q->size--;
     return 1;
 }
-
+// retorna o comando mais antigo da fila sem remover, ou NULL se a fila estiver vazia
 queue_command_t* peek_queue(queue_t *q) {
     if (is_queue_empty(q)) return NULL;
     return &q->commands[q->front];
 }
-
+// retorna o comando na posição i (0 = mais antigo) sem remover, ou NULL se i for inválido
 int peek_queue_at(queue_t *q, int i, queue_command_t *out) {
     if (i < 0 || i >= q->size) return 0;
     int idx = (q->front + i) % MAX_QUEUE_SIZE;
@@ -55,10 +56,12 @@ int peek_queue_at(queue_t *q, int i, queue_command_t *out) {
     return 1;
 }
 
+// helper para imprimir o conteúdo da fila (para debug)
 bool is_queue_empty(queue_t *q) { return q->size == 0; }
 bool is_queue_full(queue_t *q)  { return q->size == MAX_QUEUE_SIZE; }
 int  get_queue_size(queue_t *q) { return q->size; }
 
+// imprimir a fila no stdout (para o handle_query do controller)
 void list_queue(queue_t *q) {
     for (int i = 0; i < q->size; i++) {
         int idx = (q->front + i) % MAX_QUEUE_SIZE;

@@ -45,7 +45,7 @@ typedef struct ExecEntry {
 static ExecEntry *exec_head = NULL;
 
 // --- gestão da lista de execução ---
-
+// adicionar comando à lista de execução
 void exec_add_cmd(queue_command_t *cmd) {
     ExecEntry *e = malloc(sizeof(ExecEntry));
     if (!e) { perror("malloc ExecEntry"); return; }
@@ -57,6 +57,7 @@ void exec_add_cmd(queue_command_t *cmd) {
     exec_head = e;
 }
 
+// remove e retorna a entrada de execução com o cmd_id dado, ou NULL se não existir
 ExecEntry *exec_remove(int cmd_id) {
     ExecEntry *prev = NULL, *e = exec_head;
     while (e) {
@@ -101,13 +102,15 @@ void handle_query(pid_t runner_pid) {
     char buf[4096];
     int pos = 0;
 
+    // construir resposta: listar comandos em execução + na fila
     pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nExecuting\n");
     ExecEntry *e = exec_head;
     while (e && pos < (int)sizeof(buf) - 1) {
         pos += snprintf(buf + pos, sizeof(buf) - pos,
-            "user-id %s - command-id %d\n", e->cmd.user_id, e->cmd.cmd_id);  // FIX: e->cmd.user_id
+            "user-id %s - command-id %d\n", e->cmd.user_id, e->cmd.cmd_id);  
         e = e->next;
     }
+    
     pos += snprintf(buf + pos, sizeof(buf) - pos, "---\nScheduled\n");
     for (int i = 0; i < get_queue_size(&g_queue); i++) {
         queue_command_t cmd;
@@ -141,10 +144,11 @@ void handle_query(pid_t runner_pid) {
 
 void process_message(Message *msg) {
     switch (msg->type) {
+        // nova execução: adicionar à fila e tentar escalonar
         case MSG_EXECUTE: {
             queue_command_t cmd;
             cmd.cmd_id     = g_cmd_counter++;
-            cmd.runner_pid = msg->runner_pid;   // FIX: msg-> em vez de msg.
+            cmd.runner_pid = msg->runner_pid;  
             strncpy(cmd.user_id, msg->user_id, MAX_USER_LEN - 1);
             cmd.user_id[MAX_USER_LEN - 1] = '\0';
             strncpy(cmd.command, msg->command, MAX_CMD_LEN - 1);
@@ -158,7 +162,7 @@ void process_message(Message *msg) {
             enqueue_command(&g_queue, cmd);
             break;
         }
-
+        // comando terminou: remover da lista de execução, registar log e informar scheduler
         case MSG_DONE: {
             ExecEntry *e = exec_remove(msg->cmd_id);  // FIX: agora exec_remove está definida
             if (e) {
@@ -183,17 +187,17 @@ void process_message(Message *msg) {
             }
             break;
         }
-
+        // query: construir resposta e enviar ao runner
         case MSG_QUERY:
             handle_query(msg->runner_pid);
 
             break;
-
+        // shutdown: marcar pedido de shutdown e guardar PID do runner que pediu
         case MSG_SHUTDOWN:
             g_shutdown_req = 1;
             g_shutdown_pid = msg->runner_pid;
             break;
-
+        // mensagens que controller não espera receber do runner — ignorar
         case MSG_AUTHORIZE:
         case MSG_QUERY_RESP:
         case MSG_SHUTDOWN_OK:
@@ -204,19 +208,20 @@ void process_message(Message *msg) {
 // --- MAIN ---
 
 int main(int argc, char *argv[]) {
+    // 1. ler configuração (paralelismo e política de escalonamento)
     if (argc < 3) {
         write(STDERR_FILENO, "uso: controller <parallel-commands> <sched-policy>\n", 51);
         return 1;
     }
-
+    // 2. inicializar estruturas de dados, logger e FIFO
     g_max_parallel = atoi(argv[1]);
     g_sched_policy = atoi(argv[2]);
-
+    // validar política de escalonamento
     init_logger("controller.log");
     init_queue(&g_queue);
     init_scheduler(&g_scheduler, (scheduling_policy_t)g_sched_policy, &g_queue);
 
-    
+    // criar FIFO do controller
     mkfifo(CONTROLLER_FIFO, 0666);
 
     int fd_ctrl = open(CONTROLLER_FIFO, O_RDWR);
@@ -226,11 +231,11 @@ int main(int argc, char *argv[]) {
     int flags = fcntl(fd_ctrl, F_GETFL, 0);
     fcntl(fd_ctrl, F_SETFL, flags | O_NONBLOCK);
 
-    
+    // 3. loop principal: processar mensagens, escalonar comandos e monitorizar runners
     time_t shutdown_deadline = 0;
 
 
-      while (!g_shutdown_req || g_running > 0 || !is_queue_empty(&g_queue)) {
+    while (!g_shutdown_req || g_running > 0 || !is_queue_empty(&g_queue)) {
 
         // watchdog: deadline de shutdown expirou → forçar saída
         if (g_shutdown_req && shutdown_deadline != 0 && time(NULL) >= shutdown_deadline) {
@@ -258,6 +263,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
+    // tentar escalonar comandos sempre que possível (ex: após receber um pedido ou terminar um comando)
         try_schedule();
 
         // limpar filhos de queries e detetar runners que morreram

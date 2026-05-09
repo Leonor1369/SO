@@ -225,19 +225,16 @@ void handle_execute(int argc, char *argv[]) {
     write(fd_ctrl, &msg, sizeof(msg));
     close(fd_ctrl);
  
- 
-    // 3. notificar utilizador
-    char buf[128];
-    snprintf(buf, sizeof(buf), "[runner] command submitted\n");
-    out(buf);
- 
     // 4. aguardar autorização
     int fd_resp = open(runner_fifo, O_RDONLY);
     Message auth;
     read(fd_resp, &auth, sizeof(auth));
     close(fd_resp);
-    
-    // 5. executar o comando
+
+    // 5. notificar utilizador e executar
+    char buf[128];
+    snprintf(buf, sizeof(buf), "[runner] command %d submitted\n", auth.cmd_id);
+    out(buf);
     snprintf(buf, sizeof(buf), "[runner] executing command %d...\n", auth.cmd_id);
     out(buf);
  
@@ -328,6 +325,7 @@ void handle_shutdown() {
     close(fd_ctrl);
 
     out("[runner] sent shutdown notification\n");
+    out("[runner] waiting for controller to shutdown...\n");
 
     // 3. receber confirmação do controller
     int fd_resp = open(runner_fifo, O_RDONLY);

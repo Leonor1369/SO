@@ -1,11 +1,12 @@
-CC = gcc
+CC     = gcc
 CFLAGS = -Wall -g -Iinclude
 LDFLAGS =
 
-all: folders controller runner
+all: folders controller runner test_runner
 
-controller: bin/controller
-runner: bin/runner
+controller:  bin/controller
+runner:      bin/runner
+test_runner: bin/test_runner
 
 folders:
 	@mkdir -p src include obj bin tmp
@@ -14,6 +15,9 @@ bin/controller: obj/controller.o obj/queue.o obj/scheduler.o obj/logger.o
 	$(CC) $(LDFLAGS) $^ -o $@
 
 bin/runner: obj/runner.o
+	$(CC) $(LDFLAGS) $^ -o $@
+
+bin/test_runner: obj/test_runner.o
 	$(CC) $(LDFLAGS) $^ -o $@
 
 obj/%.o: src/%.c
