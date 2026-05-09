@@ -369,7 +369,7 @@ void handle_query(void) {
     ssize_t n = read(fd_resp, buf, sizeof(buf)-1);
     if (n > 0){
         buf[n]= '\n';
-        write(STDOUT_FILENO, buf, n);
+        write(1, buf, n);
     }
     close(fd_resp);
 
@@ -422,13 +422,13 @@ void handle_shutdown() {
 // Valida os argumentos e despacha para o modo de operação correto.
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        write(STDERR_FILENO, "uso: runner -e <user> <cmd> | -c | -s\n", 38);
+        write(2, "uso: runner -e <user> <cmd> | -c | -s\n", 38);
         exit(1);
     }
 
     if (strcmp(argv[1], "-e") == 0) {
         if (argc < 4) {
-            write(STDERR_FILENO, "uso: runner -e <user-id> <comando>\n", 35);
+            write(2, "uso: runner -e <user-id> <comando>\n", 35);
             exit(1);
         }
         handle_execute(argc, argv);
@@ -440,7 +440,7 @@ int main(int argc, char *argv[]) {
         handle_shutdown();
 
     } else {
-        write(STDERR_FILENO, "opcao invalida\n", 15);
+        write(2, "opcao invalida\n", 15);
         exit(1);
     }
 
